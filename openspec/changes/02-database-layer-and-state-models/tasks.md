@@ -12,12 +12,12 @@
 
 ## 3. Database Repository and State Transitions
 
-- [ ] 3.1 Write tests for active URL deduplication and `check_active_url` in `tests/test_repository.py`
-- [ ] 3.2 Implement `check_active_url` and `create_document_and_job` repository functions in `app/services/repository.py`
-- [ ] 3.3 Write tests for job lifecycle transitions and timestamp updates in `tests/test_repository.py`
-- [ ] 3.4 Implement `update_job_status` repository function handling progress and terminal timestamps in `app/services/repository.py`
-- [ ] 3.5 Write tests for document soft deletion and subsequent re-ingestion behavior in `tests/test_repository.py`
-- [ ] 3.6 Implement `soft_delete_document` repository function in `app/services/repository.py`
+- [x] 3.1 Write tests for active URL deduplication and `check_active_url` in `tests/test_repository.py`
+- [x] 3.2 Implement `check_active_url` and `create_document_and_job` repository functions in `app/services/repository.py`
+- [x] 3.3 Write tests for job lifecycle transitions and timestamp updates in `tests/test_repository.py`
+- [x] 3.4 Implement `update_job_status` repository function handling progress and terminal timestamps in `app/services/repository.py`
+- [x] 3.5 Write tests for document soft deletion and subsequent re-ingestion behavior in `tests/test_repository.py`
+- [x] 3.6 Implement `soft_delete_document` repository function in `app/services/repository.py`
 
 ## 4. Alembic Migration Setup and Schema Verification
 

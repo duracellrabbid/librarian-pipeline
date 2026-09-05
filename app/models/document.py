@@ -26,6 +26,7 @@ class Document(SQLModel, table=True):
             "source_url",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
         ),
     )
 
