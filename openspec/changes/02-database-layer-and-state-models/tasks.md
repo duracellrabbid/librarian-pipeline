@@ -5,10 +5,10 @@
 
 ## 2. SQLModel Entity Definitions
 
-- [ ] 2.1 Write unit tests for `Document` model fields, defaults, relationships, and partial index in `tests/test_models.py`
-- [ ] 2.2 Implement `Document` SQLModel with conditional unique index on active `source_url` in `app/models/document.py`
-- [ ] 2.3 Write unit tests for `IngestionJob` model, status enum, validation, and relationships in `tests/test_models.py`
-- [ ] 2.4 Implement `JobStatus` enum and `IngestionJob` SQLModel with foreign key linkage in `app/models/job.py` and register exports in `app/models/__init__.py`
+- [x] 2.1 Write unit tests for `Document` model fields, defaults, relationships, and partial index in `tests/test_models.py`
+- [x] 2.2 Implement `Document` SQLModel with conditional unique index on active `source_url` in `app/models/document.py`
+- [x] 2.3 Write unit tests for `IngestionJob` model, status enum, validation, and relationships in `tests/test_models.py`
+- [x] 2.4 Implement `JobStatus` enum and `IngestionJob` SQLModel with foreign key linkage in `app/models/job.py` and register exports in `app/models/__init__.py`
 
 ## 3. Database Repository and State Transitions
 
