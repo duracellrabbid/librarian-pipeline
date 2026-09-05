@@ -1,7 +1,7 @@
 ## 1. Database Infrastructure and Session Management
 
-- [ ] 1.1 Write tests for async database engine and session dependency in `tests/test_db_session.py`
-- [ ] 1.2 Implement async engine creation, session factory, and `get_async_session` dependency in `app/core/db.py`
+- [x] 1.1 Write tests for async database engine and session dependency in `tests/test_db_session.py`
+- [x] 1.2 Implement async engine creation, session factory, and `get_async_session` dependency in `app/core/db.py`
 
 ## 2. SQLModel Entity Definitions
 
