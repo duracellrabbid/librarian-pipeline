@@ -1,9 +1,10 @@
 """Connectivity verification script for backing services (PostgreSQL, Redis, Qdrant, Ollama)."""
 
-from pathlib import Path
 import socket
 import sys
+import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import NamedTuple
 
 # Ensure project root is in sys.path
@@ -34,7 +35,7 @@ def check_http_endpoint(url: str, timeout: float = 2.0) -> bool:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as response:
             return response.status in (200, 404)
-    except Exception:
+    except (OSError, urllib.error.URLError):
         return False
 
 
@@ -79,7 +80,9 @@ def run_checks() -> dict[str, bool]:
         reachable = tcp_ok or (http_ok is True)
         results[service.name] = reachable
         status_str = "REACHABLE" if reachable else "UNREACHABLE (service down or stopped)"
-        print(f"[{'PASS' if reachable else 'FAIL'}] {service.name:<12} ({service.host}:{service.port}) -> {status_str}")
+        endpoint = f"{service.host}:{service.port}"
+        status_tag = "PASS" if reachable else "FAIL"
+        print(f"[{status_tag}] {service.name:<12} ({endpoint}) -> {status_str}")
 
     print("=" * 60)
     return results

@@ -1,5 +1,6 @@
 from unittest.mock import patch
-from scripts.check_env import run_checks, check_tcp_port, check_http_endpoint
+
+from scripts.check_env import check_tcp_port, run_checks
 
 
 def test_check_tcp_port():
@@ -12,8 +13,10 @@ def test_check_tcp_port():
 
 
 def test_run_checks():
-    with patch("scripts.check_env.check_tcp_port", return_value=True), \
-         patch("scripts.check_env.check_http_endpoint", return_value=True):
+    with (
+        patch("scripts.check_env.check_tcp_port", return_value=True),
+        patch("scripts.check_env.check_http_endpoint", return_value=True),
+    ):
         results = run_checks()
         assert results["PostgreSQL"] is True
         assert results["Redis"] is True

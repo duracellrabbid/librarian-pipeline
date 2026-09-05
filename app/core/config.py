@@ -1,6 +1,8 @@
 """Application configuration and environment settings management using Pydantic Settings."""
 
 from functools import lru_cache
+from typing import Any
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -48,7 +50,7 @@ class Settings(BaseSettings):
     ollama_base_url: str | None = Field(default=None, description="Ollama base URL")
     embedding_model: str = Field(default="bge-m3", description="Embedding model name")
 
-    def model_post_init(self, __context) -> None:
+    def model_post_init(self, __context: Any, /) -> None:
         """Construct dependent connection URLs if not explicitly provided."""
         if not self.database_url:
             self.database_url = (
@@ -68,7 +70,7 @@ class Settings(BaseSettings):
             self.ollama_base_url = f"http://{self.ollama_host}:{self.ollama_port}"
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Return a cached singleton instance of application settings."""
     return Settings()
