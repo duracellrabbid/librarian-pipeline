@@ -4,7 +4,7 @@ import re
 
 # Regex for Wikipedia / web edit links: e.g. [edit], [edit | edit source], [edit](url), etc.
 _EDIT_LINK_PATTERN = re.compile(
-    r"\\?\[\s*(?:\\?\[)?\s*edit(?:\s*\|\s*edit\s+source)?\s*(?:\\?\])?\s*\\?\](?:\([^)]*\))?",
+    r"(?:\\?\[){1,2}\s*edit(?:\s*\|\s*edit\s+source)?\s*(?:\\?\]){1,2}(?:\([^)]*\))?",
     re.IGNORECASE,
 )
 

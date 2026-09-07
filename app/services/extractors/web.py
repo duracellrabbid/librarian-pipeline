@@ -22,7 +22,7 @@ DEFAULT_WIKIPEDIA_EXCLUDED_SELECTOR: str = (
     ".reference, .reflist, .mw-editsection, .infobox, table.infobox"
 )
 
-_FIRST_H1_PATTERN = re.compile(r"^#\s+(.+)$", re.MULTILINE)
+_FIRST_H1_PATTERN = re.compile(r"^#[ \t]+(\S.*)$", re.MULTILINE)
 
 
 class Crawl4AIExtractor(BaseExtractor):
@@ -55,18 +55,38 @@ class Crawl4AIExtractor(BaseExtractor):
         Raises:
             ExtractionError: If crawling fails, returns non-2xx status, or returns unsuccessful.
         """
+        result = await self._crawl(source)
+        self._validate_crawl_result(result, source)
+
+        raw_text = self._extract_raw_markdown(result)
+        cleaned_content = clean_markdown(raw_text)
+
+        res_metadata: dict[str, Any] = dict(getattr(result, "metadata", None) or {})
+        title = self._resolve_title(res_metadata, cleaned_content, source)
+        metadata = self._build_metadata(res_metadata, title, result, source)
+
+        return ExtractedDocument(
+            content=cleaned_content,
+            title=title,
+            source_url=source,
+            metadata=metadata,
+        )
+
+    async def _crawl(self, source: str) -> Any:
+        """Execute web crawl using configured crawler or ephemeral instance."""
         try:
             if self._crawler is not None:
-                result = await self._crawler.arun(url=source, config=self.run_config)
-            else:
-                async with AsyncWebCrawler(config=self.browser_config) as crawler:
-                    result = await crawler.arun(url=source, config=self.run_config)
+                return await self._crawler.arun(url=source, config=self.run_config)
+            async with AsyncWebCrawler(config=self.browser_config) as crawler:
+                return await crawler.arun(url=source, config=self.run_config)
         except Exception as exc:
             raise ExtractionError(
                 f"Extraction failed for '{source}': {exc}",
                 url=source,
             ) from exc
 
+    def _validate_crawl_result(self, result: Any, source: str) -> None:
+        """Validate crawl result for non-null, success status, and HTTP error codes."""
         if result is None:
             raise ExtractionError(
                 f"No result returned when crawling '{source}'",
@@ -90,50 +110,50 @@ class Crawl4AIExtractor(BaseExtractor):
                 status_code=status_code,
             )
 
+    @staticmethod
+    def _extract_raw_markdown(result: Any) -> str:
+        """Extract markdown string from Crawl4AI result."""
         raw_markdown = getattr(result, "markdown", "")
         if hasattr(raw_markdown, "raw_markdown"):
-            raw_text = str(raw_markdown.raw_markdown or "")
-        else:
-            raw_text = str(raw_markdown or "")
+            return str(raw_markdown.raw_markdown or "")
+        return str(raw_markdown or "")
 
-        cleaned_content = clean_markdown(raw_text)
-
-        # Metadata extraction and normalization
-        res_metadata: dict[str, Any] = dict(getattr(result, "metadata", None) or {})
-
-        # Resolve title: metadata -> first # H1 heading -> url fallback
+    @staticmethod
+    def _resolve_title(res_metadata: dict[str, Any], content: str, source: str) -> str:
+        """Resolve document title from metadata, first H1 heading, or URL fallback."""
         title: str | None = (
             res_metadata.get("title")
             or res_metadata.get("og:title")
             or res_metadata.get("twitter:title")
         )
-        if not title:
-            match = _FIRST_H1_PATTERN.search(cleaned_content)
-            if match:
-                title = match.group(1).strip()
-            else:
-                title = source.rstrip("/").split("/")[-1] or source
+        if title:
+            return str(title)
 
+        match = _FIRST_H1_PATTERN.search(content)
+        if match:
+            return match.group(1).strip()
+
+        return source.rstrip("/").split("/")[-1] or source
+
+    @staticmethod
+    def _build_metadata(
+        res_metadata: dict[str, Any],
+        title: str,
+        result: Any,
+        source: str,
+    ) -> dict[str, Any]:
+        """Construct normalized metadata dictionary."""
         canonical_url = (
             res_metadata.get("canonical_url")
             or res_metadata.get("og:url")
             or getattr(result, "redirected_url", None)
             or source
         )
-
         language = res_metadata.get("language") or res_metadata.get("lang") or "en"
-
-        metadata: dict[str, Any] = {
+        return {
             **res_metadata,
             "title": title,
             "canonical_url": canonical_url,
             "language": language,
             "crawled_at": datetime.now(UTC).isoformat(),
         }
-
-        return ExtractedDocument(
-            content=cleaned_content,
-            title=title,
-            source_url=source,
-            metadata=metadata,
-        )

@@ -83,6 +83,22 @@ He studied at King's College, Cambridge.
     assert "born in London." in cleaned
 
 
+def test_clean_markdown_edit_links_variants():
+    """Test removal of escaped and double-bracketed edit link variants."""
+    raw = (
+        "Section\\[edit\\]\n"
+        "Topic\\[\\[edit | edit source\\]\\]\n"
+        "Wikitext [[edit]] link\n"
+        "Escaped link \\[edit\\](https://example.com/edit)"
+    )
+    cleaned = clean_markdown(raw)
+    assert "edit" not in cleaned
+    assert "Section" in cleaned
+    assert "Topic" in cleaned
+    assert "Wikitext" in cleaned
+    assert "Escaped link" in cleaned
+
+
 def test_clean_markdown_citation_markers():
     """Test removal of citation markers while preserving standard markdown links."""
     raw = (
