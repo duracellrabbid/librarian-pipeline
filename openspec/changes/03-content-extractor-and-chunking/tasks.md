@@ -18,5 +18,6 @@
 
 ## 3. Integration & Documentation
 
-- [ ] 3.1 Write an integration test connecting extractor output directly to the chunker using a representative Wikipedia article sample.
-- [ ] 3.2 Update `README.md` to describe the extractor and chunker architecture, components, and configuration settings.
+- [x] 3.1 Write an integration test connecting extractor output directly to the chunker using a representative Wikipedia article sample.
+- [x] 3.2 Update `README.md` to describe the extractor and chunker architecture, components, and configuration settings.
+

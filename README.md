@@ -118,6 +118,80 @@ alembic upgrade head --sql
 
 ---
 
+## Content Extraction & Chunking Engine
+
+The pipeline implements an extensible data extraction and structure-aware chunking engine decoupled from database and queue logic.
+
+```mermaid
+flowchart LR
+    URL[Web URL] --> Crawler[Crawl4AIExtractor\nAsyncWebCrawler]
+    Crawler --> Cleaner[Markdown Sanitizer\nclean_markdown]
+    Cleaner --> Doc[ExtractedDocument\ntitle, content, metadata]
+    Doc --> Sectioner[Heading Parser\nparse_markdown_sections]
+    Sectioner --> Breadcrumb[Breadcrumb Injector\nContext: H1 > H2]
+    Breadcrumb --> Splitter[Recursive Splitter\nrecursive_split_text]
+    Splitter --> Chunks[list of DocumentChunk\nindex, text, tokens, metadata]
+```
+
+### 1. Document Extraction (`app.services.extractors`)
+
+- **`BaseExtractor`**: Runtime-checkable `typing.Protocol` defining `async def extract(self, source: str) -> ExtractedDocument`.
+- **`ExtractedDocument`**: Immutable Pydantic model containing:
+  - `content`: Cleaned, normalized Markdown text.
+  - `title`: Extracted document title (resolved via metadata, first `# H1` heading, or URL path).
+  - `source_url`: Canonical URL or file path.
+  - `metadata`: Arbitrary source metadata (language, canonical URL, crawl timestamp).
+- **`Crawl4AIExtractor`**: Crawler implementation backed by Crawl4AI's `AsyncWebCrawler`:
+  - Configured with default exclusion tags (`nav`, `footer`, `header`) and CSS selectors (`.vector-header`, `.vector-sidebar`, `#mw-navigation`, `.reference`, `.reflist`, `.mw-editsection`, `.infobox`, `table.infobox`) to strip navigation, sidebars, and infobox clutter.
+  - Normalizes metadata and raises domain `ExtractionError` on non-2xx HTTP responses or crawler failures.
+- **Markdown Sanitizer (`cleaning.py`)**:
+  - `remove_edit_links`: Strips `[edit]`, `[edit | edit source]`, and edit action links.
+  - `remove_citation_markers`: Strips numbered citations (`[1]`, `[12]`) and footnote notes (`[note 1]`, `[citation needed]`) while preserving standard Markdown hyperlinks.
+  - `normalize_whitespace`: Trims line trailing spaces, collapses multiple inline spaces, and eliminates redundant blank lines (≥ 3 newlines collapsed to 2).
+
+### 2. Hybrid Markdown Chunking (`app.services.chunkers`)
+
+- **`BaseChunker`**: Runtime-checkable `typing.Protocol` defining `def chunk(self, document: ExtractedDocument | str, metadata: dict | None = None) -> list[DocumentChunk]`.
+- **`DocumentChunk`**: Immutable Pydantic entity containing:
+  - `chunk_index`: Zero-based sequential integer index.
+  - `text`: Non-empty chunk text.
+  - `char_count`: Character length of the text.
+  - `token_count`: Estimated token count (`max(1, len(text) // 4)`).
+  - `metadata`: Section breadcrumbs (`heading_path`, `breadcrumb`) merged with document metadata.
+- **`parse_markdown_sections`**: Segments documents along `#`, `##`, `###` heading boundaries while shielding fenced code blocks (` ``` `, `~~~`) from `#` comment misidentification.
+- **`recursive_split_text`**: Subdivides text along natural boundaries (`\n\n` → `\n` → ` ` → character slices) with configurable `max_chunk_size` and `chunk_overlap`.
+- **`HybridMarkdownChunker`**:
+  - Partitions content into sections preserving hierarchical breadcrumbs (e.g. `["Computer Science", "Algorithms", "Quicksort"]`).
+  - Optionally prepends contextual breadcrumbs to chunk text: `[Context: Computer Science > Algorithms > Quicksort]\n\n...` to maximize embedding retrieval quality.
+  - Recursively splits oversized sections exceeding `max_chunk_size` (default: 3200 characters / ~800 tokens) while preserving section breadcrumbs across all sub-chunks.
+
+### 3. Usage Example
+
+```python
+import asyncio
+from app.services.extractors.web import Crawl4AIExtractor
+from app.services.chunkers.hybrid import HybridMarkdownChunker
+
+
+async def main():
+    extractor = Crawl4AIExtractor()
+    chunker = HybridMarkdownChunker(max_chunk_size=3200, chunk_overlap=400)
+
+    # Extract clean Markdown
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/Ada_Lovelace")
+
+    # Chunk with hierarchical breadcrumbs
+    chunks = chunker.chunk(doc)
+    for chunk in chunks:
+        print(f"[{chunk.chunk_index}] {chunk.metadata['breadcrumb']} ({chunk.token_count} tokens)")
+
+
+asyncio.run(main())
+```
+
+---
+
+
 ## Quickstart Guide
 
 ### 1. Environment Setup
