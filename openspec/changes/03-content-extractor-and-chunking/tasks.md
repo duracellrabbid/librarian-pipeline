@@ -9,11 +9,12 @@
 
 ## 2. Hybrid Markdown Chunker Implementation
 
-- [ ] 2.1 Define `DocumentChunk` model and `BaseChunker` protocol in `app/services/chunkers/base.py`.
-- [ ] 2.2 Implement heading parser in `app/services/chunkers/hybrid.py` to identify `#`, `##`, `###` boundaries and construct breadcrumb hierarchies.
-- [ ] 2.3 Implement recursive text splitting utility in `app/services/chunkers/hybrid.py` with configurable chunk size and overlap bounds.
-- [ ] 2.4 Implement `HybridMarkdownChunker` coordinating heading segmentation, recursive splitting of oversized sections, and breadcrumb metadata injection.
-- [ ] 2.5 Write unit tests in `tests/test_chunkers.py` verifying heading tree preservation, breadcrumb attachment, recursive splitting on oversized inputs, and documents without headings.
+- [x] 2.1 Define `DocumentChunk` model and `BaseChunker` protocol in `app/services/chunkers/base.py`.
+- [x] 2.2 Implement heading parser in `app/services/chunkers/hybrid.py` to identify `#`, `##`, `###` boundaries and construct breadcrumb hierarchies.
+- [x] 2.3 Implement recursive text splitting utility in `app/services/chunkers/hybrid.py` with configurable chunk size and overlap bounds.
+- [x] 2.4 Implement `HybridMarkdownChunker` coordinating heading segmentation, recursive splitting of oversized sections, and breadcrumb metadata injection.
+- [x] 2.5 Write unit tests in `tests/test_chunkers.py` verifying heading tree preservation, breadcrumb attachment, recursive splitting on oversized inputs, and documents without headings.
+
 
 ## 3. Integration & Documentation
 
