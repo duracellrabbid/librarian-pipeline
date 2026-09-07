@@ -260,6 +260,22 @@ ruff check .
 ruff format --check .
 ```
 
+### 5. Standalone Content Extraction CLI
+
+Extract and sanitize web content directly to Markdown for isolated testing of `Crawl4AIExtractor`:
+
+```bash
+# Extract web page to auto-named markdown file (e.g. ada_lovelace.md)
+python scripts/extract_to_markdown.py https://en.wikipedia.org/wiki/Ada_Lovelace
+
+# Specify custom output destination
+python scripts/extract_to_markdown.py https://en.wikipedia.org/wiki/Alan_Turing -o data/turing.md
+
+# Run quietly
+python scripts/extract_to_markdown.py https://en.wikipedia.org/wiki/Alan_Turing -q
+```
+
+
 ---
 
 ## Development Guidelines
