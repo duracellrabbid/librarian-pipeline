@@ -32,6 +32,25 @@ Welcome to the **RAG Ingestion Pipeline** repository. All AI assistants, autonom
   - CLI utilities or setup instructions
 - The [`README.md`](file:///D:/Shared/rag-ingestion-pipeline/README.md) **MUST** be updated within the same change to keep documentation in sync with reality.
 
+### 4. Low Cognitive Complexity (Threshold $\le 15$)
+- **Single Responsibility:** Any function or method must not exceed a Cognitive Complexity score of **15** (aim for $\le 10$).
+- **Decomposition:** Decompose monolithic routines into focused, single-responsibility helper methods or dedicated state-tracker classes.
+- **Flatten Control Flow:** Avoid nesting beyond 2 levels (`if` inside `for` inside `if`). Use early exits, guard clauses, and helper extractors to keep branches flat and readable.
+
+### 5. ReDoS-Free & Linear Regular Expressions
+- **No Overlapping Quantifiers:** Never write adjacent unbounded repetitions matching intersecting character classes (e.g. avoid `\s+(.+)` or `\s*(?:...)?\s*`).
+- **Disjoint Boundaries:** Ensure adjacent tokens have mutually exclusive character sets (e.g. `[ \t]+` followed by `\S`).
+- **Bounded Repetitions:** Use bounded counts like `{1,2}` instead of unbounded `+` or nested `*` when matching fixed delimiter patterns.
+- **Structural Simplicity:** Keep regex complexity below Sonar's threshold of 20. If a pattern requires deeply nested optional branches, decompose it into sequential steps or a dedicated parser.
+
+### 6. Git Hooks & 100% Test Coverage Gate
+- **Pre-commit:** Must pass `ruff check .` with zero errors or warnings before committing.
+- **Pre-push:** Must achieve **100% statement coverage** on `app` (`pytest --cov=app --cov-fail-under=100`) before pushing.
+- **Hook Installation:** New workspaces must initialize hooks via:
+  ```bash
+  pre-commit install --hook-type pre-commit --hook-type pre-push
+  ```
+
 ---
 
 ## Repository Architecture & Layout
@@ -96,6 +115,9 @@ pytest
 # Run tests with verbose output
 pytest -v
 
+# Run tests with 100% coverage enforcement (as checked by pre-push hook)
+pytest --cov=app --cov-report=term-missing --cov-fail-under=100
+
 # Run specific test file
 pytest tests/test_config.py
 ```
@@ -113,6 +135,18 @@ ruff format --check .
 
 # Auto-format codebase
 ruff format .
+```
+
+### Git Hooks (pre-commit & pre-push)
+```bash
+# Install hooks into repository lifecycle
+pre-commit install --hook-type pre-commit --hook-type pre-push
+
+# Run pre-commit stage checks manually (ruff check)
+pre-commit run --all-files --hook-stage pre-commit
+
+# Run pre-push stage checks manually (100% coverage check)
+pre-commit run --all-files --hook-stage pre-push
 ```
 
 ### OpenSpec Workflow

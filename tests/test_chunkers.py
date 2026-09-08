@@ -310,3 +310,55 @@ def test_hybrid_chunker_invalid_configs():
 
     with pytest.raises(ValueError, match="chunk_overlap must be non-negative"):
         HybridMarkdownChunker(max_chunk_size=500, chunk_overlap=500)
+
+
+def test_choose_separator_no_match():
+    """Test _choose_separator returns empty string and length when no separator matches."""
+    from app.services.chunkers.hybrid import _choose_separator
+
+    sep, idx = _choose_separator("abcd", ["\n\n", "\n"])
+    assert sep == ""
+    assert idx == 2
+
+
+def test_recursive_split_text_zero_overlap():
+    """Test recursive_split_text with chunk_overlap=0."""
+    text = "Word1 " * 50
+    chunks = recursive_split_text(text, max_chunk_size=50, chunk_overlap=0)
+    assert len(chunks) > 1
+
+
+def test_recursive_split_text_multi_tier_split():
+    """Test recursive_split_text when a split piece exceeds max_chunk_size and subdivides."""
+    text = "Small paragraph.\n\n" + ("LongSentence " * 30)
+    chunks = recursive_split_text(text, max_chunk_size=60, chunk_overlap=10)
+    assert len(chunks) >= 3
+
+
+def test_recursive_split_text_overlap_trimmed_to_fit():
+    """Test recursive_split_text trims overlap pieces when new piece plus overlap exceeds max."""
+    text = "aaa bbb ccc ddd eee fff ggg hhh"
+    chunks = recursive_split_text(text, max_chunk_size=15, chunk_overlap=10, separators=[" "])
+    assert len(chunks) > 1
+
+
+def test_hybrid_chunker_with_extra_metadata():
+    """Test HybridMarkdownChunker.chunk merges caller-provided metadata."""
+    chunker = HybridMarkdownChunker()
+    chunks = chunker.chunk("Some text", metadata={"extra_field": "val"})
+    assert len(chunks) == 1
+    assert chunks[0].metadata["extra_field"] == "val"
+
+
+def test_compute_overlap_trimmed_for_large_piece():
+    """Test _compute_overlap pops pieces when candidate overlap plus piece exceeds max."""
+    from app.services.chunkers.hybrid import _compute_overlap
+
+    overlap = _compute_overlap(
+        accumulator=["abcde"],
+        separator=" ",
+        chunk_overlap=10,
+        new_piece="x" * 18,
+        max_chunk_size=20,
+    )
+    assert overlap == []

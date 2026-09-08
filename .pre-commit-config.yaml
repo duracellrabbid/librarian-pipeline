@@ -1,0 +1,21 @@
+# See https://pre-commit.com for more information
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check .
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: pytest-coverage
+        name: pytest 100% test coverage
+        entry: pytest --cov=app --cov-report=term-missing --cov-fail-under=100
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        always_run: true

@@ -163,6 +163,28 @@ async def test_update_job_status_terminal_indexed(session: AsyncSession):
 
 
 @pytest.mark.asyncio
+async def test_update_job_status_auto_progress_100(session: AsyncSession):
+    """Verify update_job_status defaults progress_percentage to 100 when status is INDEXED."""
+    from app.services.repository import create_document_and_job, update_job_status
+
+    _, job = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/auto-100",
+    )
+    assert job.progress_percentage == 0
+
+    indexed_job = await update_job_status(
+        session=session,
+        job_id=job.id,
+        status=JobStatus.INDEXED,
+    )
+    assert indexed_job.status == JobStatus.INDEXED.value
+    assert indexed_job.progress_percentage == 100
+    assert indexed_job.finished_at is not None
+
+
+@pytest.mark.asyncio
 async def test_update_job_status_terminal_failed(session: AsyncSession):
     """Verify update_job_status records failure error message and sets finished_at."""
     from app.services.repository import create_document_and_job, update_job_status

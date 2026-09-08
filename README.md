@@ -250,6 +250,12 @@ Execute the test suite using `pytest`:
 pytest
 ```
 
+Run tests with 100% coverage enforcement:
+
+```bash
+pytest --cov=app --cov-report=term-missing --cov-fail-under=100
+```
+
 Run linting, formatting, and type annotation checks using `ruff`:
 
 ```bash
@@ -260,7 +266,29 @@ ruff check .
 ruff format --check .
 ```
 
-### 5. Standalone Content Extraction CLI
+### 5. Git Hooks (Pre-Commit & Pre-Push)
+
+Automated quality gates are configured in `.pre-commit-config.yaml`:
+- **Pre-commit hook**: Enforces that `ruff check .` passes before committing.
+- **Pre-push hook**: Enforces **100% test coverage** (`--cov-fail-under=100`) on `app` before pushing.
+
+Install both hooks into your local repository:
+
+```bash
+pre-commit install --hook-type pre-commit --hook-type pre-push
+```
+
+Manually trigger hooks across all files:
+
+```bash
+# Run pre-commit checks (ruff check)
+pre-commit run --all-files --hook-stage pre-commit
+
+# Run pre-push checks (100% coverage validation)
+pre-commit run --all-files --hook-stage pre-push
+```
+
+### 6. Standalone Content Extraction CLI
 
 Extract and sanitize web content directly to Markdown for isolated testing of `Crawl4AIExtractor`:
 

@@ -258,3 +258,79 @@ async def test_crawl4ai_extractor_default_crawler_lifecycle():
             url="https://example.com/context",
             config=extractor.run_config,
         )
+
+
+def test_normalize_whitespace_indented_blocks():
+    """Test that 4-space and tab indented lines preserve leading whitespace."""
+    from app.services.extractors.cleaning import normalize_whitespace
+
+    raw = "Intro\n    code line with    multiple spaces\n\ttab indented line"
+    cleaned = normalize_whitespace(raw)
+    assert "    code line with    multiple spaces" in cleaned
+    assert "\ttab indented line" in cleaned
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_none_result():
+    """Test ExtractionError is raised when crawler returns None."""
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.return_value = None
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler)
+    with pytest.raises(ExtractionError, match="No result returned"):
+        await extractor.extract("https://example.com/none")
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_unsuccessful_crawl():
+    """Test ExtractionError is raised when crawl returns success=False with 200."""
+    mock_result = MagicMock()
+    mock_result.status_code = 200
+    mock_result.success = False
+    mock_result.error_message = "Crawl was unsuccessful"
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.return_value = mock_result
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler)
+    with pytest.raises(ExtractionError, match="Crawl was unsuccessful"):
+        await extractor.extract("https://example.com/unsuccessful")
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_markdown_object_attribute():
+    """Test extracting markdown from result object with .raw_markdown attribute."""
+
+    class MarkdownResult:
+        raw_markdown = "# Markdown Object\n\nBody content."
+
+    mock_result = MagicMock()
+    mock_result.status_code = 200
+    mock_result.success = True
+    mock_result.markdown = MarkdownResult()
+    mock_result.metadata = {"title": "Object Title"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.return_value = mock_result
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler)
+    doc = await extractor.extract("https://example.com/obj")
+    assert doc.title == "Object Title"
+    assert "Body content." in doc.content
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_slug_fallback():
+    """Test title fallback to URL slug when no metadata title and no H1 heading exists."""
+    mock_result = MagicMock()
+    mock_result.status_code = 200
+    mock_result.success = True
+    mock_result.markdown = "Paragraph without heading."
+    mock_result.metadata = {}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.return_value = mock_result
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler)
+    doc = await extractor.extract("https://example.com/fallback-slug")
+    assert doc.title == "fallback-slug"

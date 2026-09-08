@@ -7,7 +7,7 @@ from typing import Any
 from app.services.chunkers.base import BaseChunker, DocumentChunk
 from app.services.extractors.base import ExtractedDocument
 
-_HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$")
+_HEADING_PATTERN = re.compile(r"^(#{1,6})[ \t]+(\S.*)$")
 _CODE_FENCE_PATTERN = re.compile(r"^(`{3,}|~{3,})")
 DEFAULT_SEPARATORS: list[str] = ["\n\n", "\n", " ", ""]
 
@@ -22,6 +22,81 @@ class MarkdownSection:
     content: str = ""
 
 
+class _MarkdownSectionParser:
+    """Helper state tracker for Markdown section parsing."""
+
+    def __init__(self) -> None:
+        self.sections: list[MarkdownSection] = []
+        self.current_level = 0
+        self.current_title = ""
+        self.heading_stack: list[tuple[int, str]] = []
+        self.current_content_lines: list[str] = []
+        self.in_code_block = False
+        self.code_fence_marker = ""
+
+    def process_line(self, line: str) -> None:
+        """Process a single line of Markdown, tracking code fences and heading hierarchy."""
+        if self._handle_code_block(line):
+            return
+
+        heading_match = _HEADING_PATTERN.match(line)
+        if heading_match:
+            self._handle_heading(heading_match)
+        else:
+            self.current_content_lines.append(line)
+
+    def _handle_code_block(self, line: str) -> bool:
+        """Track entry and exit of fenced code blocks to protect inner text."""
+        stripped = line.strip()
+        fence_match = _CODE_FENCE_PATTERN.match(stripped)
+        if fence_match:
+            self._toggle_fence(fence_match.group(1), stripped)
+            self.current_content_lines.append(line)
+            return True
+        if self.in_code_block:
+            self.current_content_lines.append(line)
+            return True
+        return False
+
+    def _toggle_fence(self, fence: str, stripped: str) -> None:
+        """Toggle in_code_block state based on matching fence delimiters."""
+        if not self.in_code_block:
+            self.in_code_block = True
+            self.code_fence_marker = fence[:3]
+        elif stripped.startswith(self.code_fence_marker):
+            self.in_code_block = False
+            self.code_fence_marker = ""
+
+    def _handle_heading(self, match: re.Match[str]) -> None:
+        """Finalize prior section and push new heading onto the hierarchy stack."""
+        self.finalize_section()
+        hashes, raw_title = match.groups()
+        level = len(hashes)
+        title = raw_title.strip()
+
+        while self.heading_stack and self.heading_stack[-1][0] >= level:
+            self.heading_stack.pop()
+
+        self.heading_stack.append((level, title))
+        self.current_level = level
+        self.current_title = title
+
+    def finalize_section(self) -> None:
+        """Flush accumulated content into a new MarkdownSection."""
+        content = "\n".join(self.current_content_lines).strip()
+        if content or self.current_title:
+            current_path = [title for (_, title) in self.heading_stack]
+            self.sections.append(
+                MarkdownSection(
+                    level=self.current_level,
+                    title=self.current_title,
+                    heading_path=current_path,
+                    content=content,
+                )
+            )
+        self.current_content_lines = []
+
+
 def parse_markdown_sections(markdown: str) -> list[MarkdownSection]:
     """Parse Markdown content into structured sections tracking breadcrumb hierarchies.
 
@@ -33,81 +108,111 @@ def parse_markdown_sections(markdown: str) -> list[MarkdownSection]:
     Returns:
         List of MarkdownSection objects with populated heading_path hierarchies.
     """
-    lines = markdown.splitlines()
-    sections: list[MarkdownSection] = []
+    parser = _MarkdownSectionParser()
+    for line in markdown.splitlines():
+        parser.process_line(line)
+    parser.finalize_section()
+    return parser.sections
 
-    current_level = 0
-    current_title = ""
-    heading_stack: list[tuple[int, str]] = []
-    current_content_lines: list[str] = []
 
-    in_code_block = False
-    code_fence_marker = ""
+def _choose_separator(text: str, separators: list[str]) -> tuple[str, int]:
+    """Identify the first applicable separator occurring within text."""
+    for i, sep in enumerate(separators):
+        if sep == "" or sep in text:
+            return sep, i
+    return "", len(separators)
 
-    def finalize_current_section() -> None:
-        nonlocal current_content_lines
-        content = "\n".join(current_content_lines).strip()
-        if content or current_title:
-            current_path = [title for (_, title) in heading_stack]
-            sections.append(
-                MarkdownSection(
-                    level=current_level,
-                    title=current_title,
-                    heading_path=current_path,
-                    content=content,
+
+def _refine_splits(
+    splits: list[str],
+    separator_index: int,
+    active_separators: list[str],
+    max_chunk_size: int,
+    chunk_overlap: int,
+) -> list[str]:
+    """Recursively split pieces that exceed max_chunk_size using subsequent separators."""
+    next_separators = active_separators[separator_index + 1 :]
+    refined_pieces: list[str] = []
+    for part in splits:
+        if len(part) > max_chunk_size:
+            refined_pieces.extend(
+                recursive_split_text(
+                    part,
+                    max_chunk_size=max_chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    separators=next_separators,
                 )
             )
-        current_content_lines = []
+        elif part:
+            refined_pieces.append(part)
+    return refined_pieces
 
-    for line in lines:
-        stripped = line.strip()
 
-        # Check for fenced code block delimiters
-        fence_match = _CODE_FENCE_PATTERN.match(stripped)
-        if fence_match:
-            fence = fence_match.group(1)
-            if not in_code_block:
-                in_code_block = True
-                code_fence_marker = fence[:3]
-            elif stripped.startswith(code_fence_marker):
-                in_code_block = False
-                code_fence_marker = ""
-            current_content_lines.append(line)
-            continue
+def _compute_overlap(
+    accumulator: list[str],
+    separator: str,
+    chunk_overlap: int,
+    new_piece: str,
+    max_chunk_size: int,
+) -> list[str]:
+    """Extract trailing pieces from accumulator within the overlap budget for the next chunk."""
+    if chunk_overlap <= 0 or not accumulator:
+        return []
 
-        if in_code_block:
-            current_content_lines.append(line)
-            continue
-
-        heading_match = _HEADING_PATTERN.match(line)
-        if heading_match:
-            finalize_current_section()
-            hashes, raw_title = heading_match.groups()
-            level = len(hashes)
-            title = raw_title.strip()
-
-            while heading_stack and heading_stack[-1][0] >= level:
-                heading_stack.pop()
-
-            heading_stack.append((level, title))
-            current_level = level
-            current_title = title
-        else:
-            current_content_lines.append(line)
-
-    finalize_current_section()
-
-    if not sections and markdown.strip():
-        sections.append(
-            MarkdownSection(
-                level=0,
-                title="",
-                heading_path=[],
-                content=markdown.strip(),
-            )
+    overlap_pieces: list[str] = []
+    overlap_len = 0
+    for past_piece in reversed(accumulator):
+        candidate_len = (
+            overlap_len + len(separator) + len(past_piece) if overlap_pieces else len(past_piece)
         )
+        if candidate_len > chunk_overlap:
+            break
+        overlap_pieces.insert(0, past_piece)
+        overlap_len = candidate_len
 
-    return sections
+    while overlap_pieces and (
+        len(separator.join(overlap_pieces)) + len(separator) + len(new_piece) > max_chunk_size
+    ):
+        overlap_pieces.pop(0)
+
+    return overlap_pieces
+
+
+def _merge_pieces(
+    pieces: list[str],
+    separator: str,
+    max_chunk_size: int,
+    chunk_overlap: int,
+) -> list[str]:
+    """Greedily combine pieces up to max_chunk_size maintaining configured chunk_overlap."""
+    chunks: list[str] = []
+    accumulator: list[str] = []
+    current_length = 0
+
+    for piece in pieces:
+        added_len = len(separator) + len(piece) if accumulator else len(piece)
+        if current_length + added_len <= max_chunk_size:
+            accumulator.append(piece)
+            current_length += added_len
+            continue
+
+        if accumulator:
+            merged = separator.join(accumulator).strip()
+            if merged:
+                chunks.append(merged)
+
+        overlap_pieces = _compute_overlap(
+            accumulator, separator, chunk_overlap, piece, max_chunk_size
+        )
+        accumulator = [*overlap_pieces, piece]
+        current_length = len(separator.join(accumulator))
+
+    if accumulator:
+        merged = separator.join(accumulator).strip()
+        if merged:
+            chunks.append(merged)
+
+    return chunks
 
 
 def recursive_split_text(
@@ -132,92 +237,18 @@ def recursive_split_text(
         return [text] if text.strip() else []
 
     active_separators = separators if separators is not None else DEFAULT_SEPARATORS
-
-    # Select the first applicable separator that exists in text
-    chosen_separator = ""
-    separator_index = len(active_separators)
-    for i, sep in enumerate(active_separators):
-        if sep == "":
-            chosen_separator = ""
-            separator_index = i
-            break
-        if sep in text:
-            chosen_separator = sep
-            separator_index = i
-            break
+    chosen_separator, separator_index = _choose_separator(text, active_separators)
 
     # Fallback to character slicing when no delimiter or at terminal separator
     if chosen_separator == "":
         step = max(1, max_chunk_size - chunk_overlap)
         return [text[i : i + max_chunk_size] for i in range(0, len(text), step)]
 
-    # Split text by chosen separator
     splits = text.split(chosen_separator)
-    next_separators = active_separators[separator_index + 1 :]
-
-    # Recursively break down any individual pieces that exceed max_chunk_size
-    refined_pieces: list[str] = []
-    for part in splits:
-        if len(part) > max_chunk_size:
-            refined_pieces.extend(
-                recursive_split_text(
-                    part,
-                    max_chunk_size=max_chunk_size,
-                    chunk_overlap=chunk_overlap,
-                    separators=next_separators,
-                )
-            )
-        elif part:
-            refined_pieces.append(part)
-
-    # Greedily merge pieces up to max_chunk_size with overlap
-    chunks: list[str] = []
-    accumulator: list[str] = []
-    current_length = 0
-
-    for piece in refined_pieces:
-        added_len = len(chosen_separator) + len(piece) if accumulator else len(piece)
-        if current_length + added_len <= max_chunk_size:
-            accumulator.append(piece)
-            current_length += added_len
-        else:
-            if accumulator:
-                merged = chosen_separator.join(accumulator).strip()
-                if merged:
-                    chunks.append(merged)
-
-            # Build overlap from trailing pieces of the emitted chunk
-            overlap_pieces: list[str] = []
-            overlap_len = 0
-            if chunk_overlap > 0 and accumulator:
-                for past_piece in reversed(accumulator):
-                    candidate_len = (
-                        overlap_len + len(chosen_separator) + len(past_piece)
-                        if overlap_pieces
-                        else len(past_piece)
-                    )
-                    if candidate_len <= chunk_overlap:
-                        overlap_pieces.insert(0, past_piece)
-                        overlap_len = candidate_len
-                    else:
-                        break
-
-            # Ensure adding the new piece won't exceed max_chunk_size with overlap
-            while overlap_pieces and (
-                len(chosen_separator.join(overlap_pieces)) + len(chosen_separator) + len(piece)
-                > max_chunk_size
-            ):
-                overlap_pieces.pop(0)
-
-            accumulator = [*overlap_pieces, piece]
-            current_length = len(chosen_separator.join(accumulator))
-
-    if accumulator:
-        merged = chosen_separator.join(accumulator).strip()
-        if merged:
-            chunks.append(merged)
-
-    return chunks
+    refined_pieces = _refine_splits(
+        splits, separator_index, active_separators, max_chunk_size, chunk_overlap
+    )
+    return _merge_pieces(refined_pieces, chosen_separator, max_chunk_size, chunk_overlap)
 
 
 class HybridMarkdownChunker(BaseChunker):
@@ -263,20 +294,7 @@ class HybridMarkdownChunker(BaseChunker):
         Returns:
             List of standardized DocumentChunk entities.
         """
-        if isinstance(document, ExtractedDocument):
-            raw_content = document.content
-            base_meta: dict[str, Any] = {
-                "source_url": document.source_url,
-                "document_title": document.title,
-                **document.metadata,
-            }
-        else:
-            raw_content = str(document)
-            base_meta = {}
-
-        if metadata:
-            base_meta.update(metadata)
-
+        raw_content, base_meta = self._extract_document_input(document, metadata)
         if not raw_content or not raw_content.strip():
             return []
 
@@ -284,48 +302,92 @@ class HybridMarkdownChunker(BaseChunker):
         chunks: list[DocumentChunk] = []
 
         for section in sections:
-            if not section.content.strip():
-                continue
+            new_chunks = self._create_section_chunks(section, base_meta, len(chunks))
+            chunks.extend(new_chunks)
 
-            breadcrumb = " > ".join(section.heading_path) if section.heading_path else ""
-            should_inject = self.inject_breadcrumbs and bool(breadcrumb)
-            prefix = self.breadcrumb_prefix.format(breadcrumb=breadcrumb) if should_inject else ""
+        return chunks
 
-            candidate_text = f"{prefix}{section.content.strip()}"
-
-            section_meta: dict[str, Any] = {
-                **base_meta,
-                "heading_path": list(section.heading_path),
-                "breadcrumb": breadcrumb,
+    @staticmethod
+    def _extract_document_input(
+        document: ExtractedDocument | str,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Normalize extracted document or raw text string and base metadata."""
+        if isinstance(document, ExtractedDocument):
+            base_meta: dict[str, Any] = {
+                "source_url": document.source_url,
+                "document_title": document.title,
+                **document.metadata,
             }
+            content = document.content
+        else:
+            base_meta = {}
+            content = str(document)
 
-            if len(candidate_text) <= self.max_chunk_size:
-                chunks.append(
-                    DocumentChunk(
-                        chunk_index=len(chunks),
-                        text=candidate_text,
-                        metadata=section_meta,
-                    )
+        if metadata:
+            base_meta.update(metadata)
+        return content, base_meta
+
+    def _create_section_chunks(
+        self,
+        section: MarkdownSection,
+        base_meta: dict[str, Any],
+        start_index: int,
+    ) -> list[DocumentChunk]:
+        """Create single or recursive chunks for a given MarkdownSection."""
+        content = section.content.strip()
+        if not content:
+            return []
+
+        breadcrumb = " > ".join(section.heading_path) if section.heading_path else ""
+        prefix = (
+            self.breadcrumb_prefix.format(breadcrumb=breadcrumb)
+            if self.inject_breadcrumbs and breadcrumb
+            else ""
+        )
+        section_meta: dict[str, Any] = {
+            **base_meta,
+            "heading_path": list(section.heading_path),
+            "breadcrumb": breadcrumb,
+        }
+
+        candidate_text = f"{prefix}{content}"
+        if len(candidate_text) <= self.max_chunk_size:
+            return [
+                DocumentChunk(
+                    chunk_index=start_index,
+                    text=candidate_text,
+                    metadata=section_meta,
                 )
-            else:
-                # Oversized section requires recursive splitting
-                effective_max = max(50, self.max_chunk_size - len(prefix))
-                effective_overlap = min(self.chunk_overlap, effective_max // 2)
+            ]
 
-                sub_splits = recursive_split_text(
-                    section.content.strip(),
-                    max_chunk_size=effective_max,
-                    chunk_overlap=effective_overlap,
+        return self._split_oversized_section(content, prefix, section_meta, start_index)
+
+    def _split_oversized_section(
+        self,
+        content: str,
+        prefix: str,
+        section_meta: dict[str, Any],
+        start_index: int,
+    ) -> list[DocumentChunk]:
+        """Recursively split oversized section content and wrap with breadcrumb prefix."""
+        effective_max = max(50, self.max_chunk_size - len(prefix))
+        effective_overlap = min(self.chunk_overlap, effective_max // 2)
+
+        sub_splits = recursive_split_text(
+            content,
+            max_chunk_size=effective_max,
+            chunk_overlap=effective_overlap,
+        )
+
+        chunks: list[DocumentChunk] = []
+        for i, sub in enumerate(sub_splits):
+            sub_text = f"{prefix}{sub}" if prefix else sub
+            chunks.append(
+                DocumentChunk(
+                    chunk_index=start_index + i,
+                    text=sub_text,
+                    metadata=section_meta,
                 )
-
-                for sub in sub_splits:
-                    sub_text = f"{prefix}{sub}" if prefix else sub
-                    chunks.append(
-                        DocumentChunk(
-                            chunk_index=len(chunks),
-                            text=sub_text,
-                            metadata=section_meta,
-                        )
-                    )
-
+            )
         return chunks
