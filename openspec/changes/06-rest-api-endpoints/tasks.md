@@ -1,9 +1,9 @@
 ## 1. FastAPI App Initialization & Schemas
 
-- [ ] 1.1 Define request and response Pydantic schemas in `app/api/schemas.py` (`IngestRequest`, `IngestResponse`, `JobStatusResponse`, `DocumentCheckResponse`, `DeleteResponse`).
-- [ ] 1.2 Implement API dependency injection helpers in `app/api/deps.py` for database sessions, `TaskDispatcher`, and `QdrantVectorStore`.
-- [ ] 1.3 Implement the FastAPI application in `app/main.py` configuring lifespan events, CORS middleware, exception handlers, and routing.
-- [ ] 1.4 Write unit tests in `tests/test_api_schemas.py` verifying request validation, URL parsing, and response serialization.
+- [x] 1.1 Define request and response Pydantic schemas in `app/api/schemas.py` (`IngestRequest`, `IngestResponse`, `JobStatusResponse`, `DocumentCheckResponse`, `DeleteResponse`).
+- [x] 1.2 Implement API dependency injection helpers in `app/api/deps.py` for database sessions, `TaskDispatcher`, and `QdrantVectorStore`.
+- [x] 1.3 Implement the FastAPI application in `app/main.py` configuring lifespan events, CORS middleware, exception handlers, and routing.
+- [x] 1.4 Write unit tests in `tests/test_api_schemas.py` verifying request validation, URL parsing, and response serialization.
 
 ## 2. Document Endpoints Implementation
 
