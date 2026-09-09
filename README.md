@@ -24,6 +24,11 @@ rag-ingestion-pipeline/
 │   └── env.py        # Async migration runner with SQLModel metadata
 ├── app/
 │   ├── api/          # FastAPI routes, routers, and request/response models
+│   │   ├── deps.py       # Dependency injection helpers (db, dispatcher, vector store)
+│   │   ├── schemas.py    # Pydantic request and response schemas
+│   │   └── v1/           # API version 1 router and endpoints
+│   │       └── endpoints/
+│   │           └── documents.py # Document ingestion, status, check, delete
 │   ├── core/         # Core settings, database engine, session management, dispatcher protocol
 │   ├── models/       # SQLModel database tables and domain entities
 │   ├── services/     # Services: repository, extractors, chunkers, embeddings, vector_store, pipeline
@@ -33,7 +38,8 @@ rag-ingestion-pipeline/
 │   │   ├── vector_store/ # Qdrant vector store adapter & search
 │   │   ├── pipeline.py   # IngestionPipelineService orchestrator
 │   │   └── repository.py # Document & IngestionJob state repository
-│   └── workers/      # ARQ background task runner, WorkerSettings, and dispatcher
+│   ├── workers/      # ARQ background task runner, WorkerSettings, and dispatcher
+│   └── main.py       # FastAPI application entry point, lifespan, CORS, and exception handlers
 ├── openspec/         # OpenSpec planning specifications, active/archived changes
 ├── scripts/          # Operational utilities (e.g. check_env.py)
 ├── tests/            # Test suite (pytest)
@@ -348,6 +354,135 @@ arq app.workers.tasks.WorkerSettings
 
 ---
 
+## REST API Endpoints
+
+The system provides a validated REST API built with FastAPI exposing document ingestion, status tracking, existence checks, and soft-deletion with vector purging.
+
+Interactive API documentation (Swagger UI) is available at `http://localhost:8000/docs` (OpenAPI schema at `http://localhost:8000/openapi.json`).
+
+### Running the API Server
+
+Start the API server with Uvicorn:
+
+```bash
+# Start FastAPI application
+uvicorn app.main.py:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### Endpoints Reference
+
+All endpoints are available at the root path (e.g. `/documents/...`) and under the versioned prefix (`/api/v1/documents/...`).
+
+#### 1. Submit Ingestion (`POST /documents/ingest`)
+
+Submits a web URL for asynchronous scraping, chunking, embedding, and vector indexing.
+
+- **Request Body**:
+  ```json
+  {
+    "url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
+    "title": "Artificial Intelligence",
+    "metadata": { "source": "wikipedia" }
+  }
+  ```
+- **Responses**:
+  - `202 Accepted`: Job successfully enqueued.
+    ```json
+    {
+      "job_id": "7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a",
+      "doc_id": "0d635fc2-d1d4-4cf5-94cf-6c0756778f28",
+      "status": "PENDING",
+      "message": "Ingestion job submitted successfully"
+    }
+    ```
+  - `409 Conflict`: URL is already actively ingested.
+    ```json
+    {
+      "detail": "Active document already exists for URL: https://en.wikipedia.org/wiki/Artificial_intelligence"
+    }
+    ```
+  - `422 Unprocessable Entity`: Malformed payload or invalid HTTP/HTTPS URL scheme.
+- **Example `curl`**:
+  ```bash
+  curl -X POST "http://localhost:8000/documents/ingest" \
+    -H "Content-Type: application/json" \
+    -d '{"url": "https://en.wikipedia.org/wiki/Artificial_intelligence", "title": "AI"}'
+  ```
+
+#### 2. Get Job Status (`GET /documents/status/{job_id}`)
+
+Retrieves real-time execution status and progress percentage for a background ingestion job.
+
+- **Path Parameters**:
+  - `job_id` (UUID): Unique identifier of the ingestion job.
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "job_id": "7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a",
+      "status": "INDEXED",
+      "progress_percentage": 100,
+      "error_message": null
+    }
+    ```
+  - `404 Not Found`: Job does not exist.
+- **Example `curl`**:
+  ```bash
+  curl -X GET "http://localhost:8000/documents/status/7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a"
+  ```
+
+#### 3. Check Document Existence (`GET /documents/check`)
+
+Checks whether a target URL is currently actively indexed.
+
+- **Query Parameters**:
+  - `url` (string, required): Source URL to check.
+- **Responses**:
+  - `200 OK` (Active document):
+    ```json
+    {
+      "exists": true,
+      "doc_id": "0d635fc2-d1d4-4cf5-94cf-6c0756778f28",
+      "status": "INDEXED"
+    }
+    ```
+  - `200 OK` (Non-existent or soft-deleted document):
+    ```json
+    {
+      "exists": false,
+      "doc_id": null,
+      "status": null
+    }
+    ```
+- **Example `curl`**:
+  ```bash
+  curl -X GET "http://localhost:8000/documents/check?url=https://en.wikipedia.org/wiki/Artificial_intelligence"
+  ```
+
+#### 4. Delete Document & Purge Vectors (`DELETE /documents/{doc_id}`)
+
+Purges all vector embeddings from Qdrant matching `doc_id` and soft-deletes the PostgreSQL document record (`deleted_at = NOW()`), allowing the URL to be re-ingested in the future.
+
+- **Path Parameters**:
+  - `doc_id` (UUID): Unique identifier of the active document.
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "doc_id": "0d635fc2-d1d4-4cf5-94cf-6c0756778f28",
+      "status": "deleted",
+      "message": "Document and associated vectors successfully deleted"
+    }
+    ```
+  - `404 Not Found`: Document not found or already soft-deleted.
+  - `502 Bad Gateway`: Vector store failed to purge embeddings (preserves PostgreSQL record).
+- **Example `curl`**:
+  ```bash
+  curl -X DELETE "http://localhost:8000/documents/0d635fc2-d1d4-4cf5-94cf-6c0756778f28"
+  ```
+
+---
+
 ## Quickstart Guide
 
 ### 1. Environment Setup
@@ -404,6 +539,12 @@ Start the ARQ background worker:
 arq app.workers.tasks.WorkerSettings
 ```
 
+Start the FastAPI web server:
+
+```bash
+uvicorn app.main.py:app --host 0.0.0.0 --port 8000 --reload
+```
+
 ### 4. Running Tests & Quality Checks
 
 Execute the test suite using `pytest`:
@@ -418,9 +559,15 @@ Run tests with 100% coverage enforcement:
 pytest --cov=app --cov-report=term-missing --cov-fail-under=100
 ```
 
-Run specific pipeline, dispatcher, and vector test suites:
+Run specific pipeline, API, dispatcher, and vector test suites:
 
 ```bash
+# Run unit tests for API schemas, dependencies, and endpoints
+pytest tests/test_api_schemas.py tests/test_api_deps.py tests/test_api_endpoints.py tests/test_main.py
+
+# Run end-to-end API integration tests
+pytest tests/test_api_integration.py
+
 # Run unit tests for task dispatcher and worker settings
 pytest tests/test_dispatcher.py
 

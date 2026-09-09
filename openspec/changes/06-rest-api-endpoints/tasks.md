@@ -15,5 +15,5 @@
 
 ## 3. Full Integration Testing & Documentation
 
-- [ ] 3.1 Write end-to-end integration tests in `tests/test_api_integration.py` verifying the complete HTTP workflow: existence check, ingestion submission, status inspection, duplicate rejection, and soft-deletion.
-- [ ] 3.2 Update `README.md` with complete API endpoint documentation, example `curl` commands, and instructions for running the web server (`uvicorn app.main.py:app`).
+- [x] 3.1 Write end-to-end integration tests in `tests/test_api_integration.py` verifying the complete HTTP workflow: existence check, ingestion submission, status inspection, duplicate rejection, and soft-deletion.
+- [x] 3.2 Update `README.md` with complete API endpoint documentation, example `curl` commands, and instructions for running the web server (`uvicorn app.main.py:app`).
