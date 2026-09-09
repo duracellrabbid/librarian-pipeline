@@ -7,11 +7,11 @@
 
 ## 2. Document Endpoints Implementation
 
-- [ ] 2.1 Implement `POST /documents/ingest` in `app/api/v1/endpoints/documents.py` validating active URL duplication (returning HTTP 409 Conflict) or enqueueing the job (returning HTTP 202 Accepted).
-- [ ] 2.2 Implement `GET /documents/status/{job_id}` in `app/api/v1/endpoints/documents.py` returning job progress and status or HTTP 404 Not Found.
-- [ ] 2.3 Implement `GET /documents/check` in `app/api/v1/endpoints/documents.py` verifying whether a URL is currently active in the database.
-- [ ] 2.4 Implement `DELETE /documents/{doc_id}` in `app/api/v1/endpoints/documents.py` coordinating Qdrant vector deletion and PostgreSQL soft-deletion.
-- [ ] 2.5 Write unit tests in `tests/test_api_endpoints.py` using `httpx.AsyncClient` with mocked dependencies to test all 4 endpoints, status codes, and error cases.
+- [x] 2.1 Implement `POST /documents/ingest` in `app/api/v1/endpoints/documents.py` validating active URL duplication (returning HTTP 409 Conflict) or enqueueing the job (returning HTTP 202 Accepted).
+- [x] 2.2 Implement `GET /documents/status/{job_id}` in `app/api/v1/endpoints/documents.py` returning job progress and status or HTTP 404 Not Found.
+- [x] 2.3 Implement `GET /documents/check` in `app/api/v1/endpoints/documents.py` verifying whether a URL is currently active in the database.
+- [x] 2.4 Implement `DELETE /documents/{doc_id}` in `app/api/v1/endpoints/documents.py` coordinating Qdrant vector deletion and PostgreSQL soft-deletion.
+- [x] 2.5 Write unit tests in `tests/test_api_endpoints.py` using `httpx.AsyncClient` with mocked dependencies to test all 4 endpoints, status codes, and error cases.
 
 ## 3. Full Integration Testing & Documentation
 

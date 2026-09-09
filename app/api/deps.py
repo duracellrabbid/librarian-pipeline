@@ -20,7 +20,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-def get_dispatcher(request: Request | None = None) -> TaskDispatcher:
+def get_dispatcher(request: Request = None) -> TaskDispatcher:  # type: ignore[assignment]
     """Dependency resolving the TaskDispatcher instance."""
     if (
         request is not None
@@ -43,7 +43,7 @@ def set_default_dispatcher(dispatcher: TaskDispatcher | None) -> None:
     _default_dispatcher = dispatcher
 
 
-def get_vector_store(request: Request | None = None) -> QdrantVectorStore:
+def get_vector_store(request: Request = None) -> QdrantVectorStore:  # type: ignore[assignment]
     """Dependency resolving the QdrantVectorStore instance."""
     if (
         request is not None
