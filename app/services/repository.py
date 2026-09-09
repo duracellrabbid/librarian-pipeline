@@ -132,3 +132,35 @@ async def soft_delete_document(session: AsyncSession, doc_id: UUID) -> Document:
     await session.commit()
     await session.refresh(document)
     return document
+
+
+async def update_document_metadata(
+    session: AsyncSession,
+    document_id: UUID,
+    *,
+    title: str | None = None,
+    chunk_count: int | None = None,
+    content_hash: str | None = None,
+) -> Document:
+    """Update document metadata attributes and timestamp.
+
+    Raises DocumentNotFoundError if no document matching document_id exists.
+    """
+    statement = select(Document).where(Document.id == document_id)
+    result = await session.execute(statement)
+    document = result.scalars().first()
+
+    if document is None:
+        raise DocumentNotFoundError(f"Document {document_id} not found")
+
+    if title is not None:
+        document.title = title
+    if chunk_count is not None:
+        document.chunk_count = chunk_count
+    if content_hash is not None:
+        document.content_hash = content_hash
+
+    document.updated_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(document)
+    return document

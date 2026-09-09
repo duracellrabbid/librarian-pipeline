@@ -24,15 +24,16 @@ rag-ingestion-pipeline/
 │   └── env.py        # Async migration runner with SQLModel metadata
 ├── app/
 │   ├── api/          # FastAPI routes, routers, and request/response models
-│   ├── core/         # Core settings, database engine, session management
+│   ├── core/         # Core settings, database engine, session management, dispatcher protocol
 │   ├── models/       # SQLModel database tables and domain entities
-│   ├── services/     # Services: repository, extractors, chunkers, embeddings, vector_store
+│   ├── services/     # Services: repository, extractors, chunkers, embeddings, vector_store, pipeline
 │   │   ├── chunkers/     # Context-aware HybridMarkdownChunker
 │   │   ├── embeddings/   # Asynchronous Ollama embedding client (bge-m3)
 │   │   ├── extractors/   # Crawl4AI web extraction and cleaning
 │   │   ├── vector_store/ # Qdrant vector store adapter & search
+│   │   ├── pipeline.py   # IngestionPipelineService orchestrator
 │   │   └── repository.py # Document & IngestionJob state repository
-│   └── workers/      # ARQ async background task workers
+│   └── workers/      # ARQ background task runner, WorkerSettings, and dispatcher
 ├── openspec/         # OpenSpec planning specifications, active/archived changes
 ├── scripts/          # Operational utilities (e.g. check_env.py)
 ├── tests/            # Test suite (pytest)
@@ -258,6 +259,95 @@ asyncio.run(main())
 
 ---
 
+## Task Dispatcher & Pipeline Service
+
+The asynchronous processing tier decouples client-facing request ingestion from heavy extraction, chunking, and embedding workflows.
+
+```text
+[Client / API]
+       │
+       ▼  (enqueue_ingestion_job)
+[ArqTaskDispatcher] ──▶ [Redis Queue (ARQ)]
+                               │
+                               ▼  (Worker Process)
+                      [run_ingestion_pipeline]
+                               │
+                               ▼
+                   [IngestionPipelineService]
+           ┌───────────────────┼───────────────────┐
+           ▼                   ▼                   ▼
+   [Crawl4AIExtractor]  [HybridChunker]  [OllamaClient] ──▶ [QdrantStore]
+   (SCRAPING: 20%)     (CHUNKING: 40%)   (EMBEDDING: 70%)   (INDEXED: 100%)
+```
+
+### 1. Abstract Task Dispatcher (`app.core.dispatcher` & `app.workers.dispatcher`)
+
+The `TaskDispatcher` protocol decouples queue clients from specific broker technologies:
+
+```python
+from app.core.dispatcher import TaskDispatcher
+from app.workers.dispatcher import ArqTaskDispatcher
+
+# Instantiate ARQ Redis dispatcher
+dispatcher: TaskDispatcher = ArqTaskDispatcher()
+
+# Enqueue background ingestion job
+await dispatcher.enqueue_ingestion_job(
+    job_id=job.id,
+    document_id=document.id,
+    url="https://example.com/documentation",
+)
+```
+
+- **Parameter Serialization**: Serializes job/document identifiers to string representations and sets `_job_id` for deduplication.
+- **Connection Failure Handling**: Catches Redis broker errors and raises domain `DispatcherError`.
+- **Resource Management**: Provides `close()` for clean client shutdown.
+
+### 2. Ingestion Pipeline Service (`app.services.pipeline`)
+
+`IngestionPipelineService` coordinates the multi-stage document lifecycle with full dependency injection:
+
+```python
+from app.services.pipeline import IngestionPipelineService
+
+pipeline = IngestionPipelineService()
+
+# Run full pipeline with automatic state transitions and error capture
+await pipeline.run(
+    job_id=job.id,
+    document_id=document.id,
+    url="https://example.com/documentation",
+)
+```
+
+#### Stepwise Lifecycle Overview
+
+| Stage | Progress | Description |
+|---|---|---|
+| `PENDING` | 0% | Job record created in database; waiting for queue dispatch. |
+| `SCRAPING` | 20% | `BaseExtractor` extracts clean markdown and title from source URL. |
+| `CHUNKING` | 40% | `BaseChunker` creates `DocumentChunk` items with section breadcrumbs. |
+| `EMBEDDING` | 70% | `BaseEmbeddingClient` generates 1024-d dense vectors; `BaseVectorStore` upserts points to Qdrant. |
+| `INDEXED` | 100% | `Document` record is finalized with title, chunk count, and content hash; `finished_at` is set. |
+| `FAILED` | -- | Any uncaught exception sets status to `FAILED`, records `error_message`, and terminates cleanly. |
+
+### 3. ARQ Background Worker Runner (`app.workers.tasks`)
+
+The background task runner is implemented in `app.workers.tasks`:
+- `run_ingestion_pipeline`: Deserializes task parameters, resolves `IngestionPipelineService`, and executes the pipeline.
+- `WorkerSettings`: Worker configuration declaring functions, Redis settings, concurrency limits, and lifecycle hooks (`startup` / `shutdown`).
+
+### 4. Running the ARQ Worker
+
+Start the ARQ background worker daemon using the ARQ CLI:
+
+```bash
+# Start ARQ worker process
+arq app.workers.tasks.WorkerSettings
+```
+
+---
+
 ## Quickstart Guide
 
 ### 1. Environment Setup
@@ -308,6 +398,12 @@ Apply database migrations:
 alembic upgrade head
 ```
 
+Start the ARQ background worker:
+
+```bash
+arq app.workers.tasks.WorkerSettings
+```
+
 ### 4. Running Tests & Quality Checks
 
 Execute the test suite using `pytest`:
@@ -322,9 +418,18 @@ Run tests with 100% coverage enforcement:
 pytest --cov=app --cov-report=term-missing --cov-fail-under=100
 ```
 
-Run specific vector storage and embedding test suites:
+Run specific pipeline, dispatcher, and vector test suites:
 
 ```bash
+# Run unit tests for task dispatcher and worker settings
+pytest tests/test_dispatcher.py
+
+# Run unit tests for ingestion pipeline service
+pytest tests/test_pipeline_service.py
+
+# Run headless end-to-end pipeline integration tests
+pytest tests/test_pipeline_integration.py
+
 # Run unit tests for embeddings and vector storage
 pytest tests/test_embeddings.py tests/test_vector_store.py
 

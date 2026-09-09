@@ -48,3 +48,18 @@ class VectorStoreError(PipelineError):
         super().__init__(message)
         self.collection_name = collection_name
         self.status_code = status_code
+
+
+class DispatcherError(PipelineError):
+    """Domain exception raised when background task dispatching fails."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        job_id: str | None = None,
+        original_error: Exception | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.job_id = job_id
+        self.original_error = original_error
