@@ -340,3 +340,8 @@ def test_coerce_uuid() -> None:
     u = uuid4()
     assert coerce_uuid(u) is u
     assert coerce_uuid(str(u)) == u
+
+
+def test_worker_settings_job_timeout() -> None:
+    """Test WorkerSettings.job_timeout matches arq_job_timeout setting (900s)."""
+    assert WorkerSettings.job_timeout == 900

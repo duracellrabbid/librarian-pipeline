@@ -101,4 +101,4 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     max_jobs: int = 10
-    job_timeout: int = 300
+    job_timeout: int = get_settings().arq_job_timeout

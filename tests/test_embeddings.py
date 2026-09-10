@@ -65,8 +65,8 @@ def test_ollama_client_init_defaults() -> None:
     assert client.base_url == settings.ollama_base_url.rstrip("/")
     assert client.model == settings.embedding_model
     assert client.dimension == 1024
-    assert client.batch_size == 16
-    assert client.timeout == 30.0
+    assert client.batch_size == 8
+    assert client.timeout == 120.0
     assert client.max_retries == 3
     assert client.backoff_factor == 0.5
 

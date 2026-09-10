@@ -227,7 +227,9 @@ The semantic storage and retrieval layer pairs local multilingual dense embeddin
 
 - **Model**: `bge-m3` multilingual dense embedding model (1024 vector dimensions, 8192-token context window).
 - **HTTP Endpoint**: Asynchronously targets Ollama's `/api/embed` endpoint via `httpx.AsyncClient`.
-- **Batch Processing**: Groups chunks into configurable batch sizes (`batch_size=16` default) to optimize network roundtrips.
+- **Batch Processing**: Groups chunks into configurable batch sizes (`batch_size=8` default via `EMBEDDING_BATCH_SIZE`) to optimize network roundtrips and avoid request timeouts on dense text.
+- **Configurable HTTP Timeout**: Per-request timeout configurable via `EMBEDDING_TIMEOUT` (`120.0s` default) to prevent spurious read timeouts during heavy embedding passes.
+- **Hardware Acceleration**: Docker Compose configuration includes NVIDIA GPU device reservations for `rag_ollama`, enabling massive embedding throughput speedups (up to 40x faster than CPU).
 - **Resilient Retries**: Implements exponential backoff retry for transient network errors (`httpx.RequestError`) and server errors (HTTP 5xx, 429), failing fast on non-retriable 4xx client errors with typed `EmbeddingError`.
 - **Dimension Validation**: Strictly verifies that returned vectors match the expected 1024-dimensional float format.
 
@@ -352,13 +354,13 @@ await pipeline.run(
 | `CHUNKING` | 40% | `BaseChunker` creates `DocumentChunk` items with section breadcrumbs. |
 | `EMBEDDING` | 70% | `BaseEmbeddingClient` generates 1024-d dense vectors; `BaseVectorStore` upserts points to Qdrant. |
 | `INDEXED` | 100% | `Document` record is finalized with title, chunk count, and content hash; `finished_at` is set. |
-| `FAILED` | -- | Any uncaught exception sets status to `FAILED`, records `error_message`, and terminates cleanly. |
+| `FAILED` | -- | Any uncaught exception or task cancellation/timeout (`asyncio.CancelledError`) cleanly shields and updates status to `FAILED`, records `error_message`, and marks `finished_at`. |
 
 ### 3. ARQ Background Worker Runner (`app.workers.tasks`)
 
 The background task runner is implemented in `app.workers.tasks`:
 - `run_ingestion_pipeline`: Deserializes task parameters, resolves `IngestionPipelineService`, and executes the pipeline.
-- `WorkerSettings`: Worker configuration declaring functions, Redis settings, concurrency limits, and lifecycle hooks (`startup` / `shutdown`).
+- `WorkerSettings`: Worker configuration declaring functions, Redis settings, concurrency limits (`max_jobs=10`), configurable task timeout (`job_timeout=900s` via `ARQ_JOB_TIMEOUT`), and lifecycle hooks (`startup` / `shutdown`).
 
 ### 4. Running the ARQ Worker
 
@@ -578,9 +580,12 @@ Key environment configuration variables:
 | `MAX_BATCH_INGEST_SIZE` | `10` | Maximum number of URLs permitted per batch ingestion request |
 | `DATABASE_URL` | `postgresql+asyncpg://...` | Async PostgreSQL database connection URL |
 | `REDIS_HOST` / `REDIS_PORT` | `localhost:6379` | Redis host and port for ARQ background jobs |
+| `ARQ_JOB_TIMEOUT` | `900` | ARQ background job timeout in seconds (accommodates large documents) |
 | `QDRANT_HOST` / `QDRANT_PORT` | `localhost:6333` | Qdrant vector database host and REST port |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama service endpoint for dense embeddings |
-| `OLLAMA_MODEL` | `bge-m3` | Embedding model identifier |
+| `EMBEDDING_MODEL` | `bge-m3` | Embedding model identifier |
+| `EMBEDDING_BATCH_SIZE` | `8` | Chunk batch size per embedding HTTP request |
+| `EMBEDDING_TIMEOUT` | `120.0` | HTTP client request timeout in seconds for embedding generation |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ### 3. Launch Local Infrastructure

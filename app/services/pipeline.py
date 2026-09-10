@@ -1,5 +1,6 @@
 """Ingestion pipeline orchestration service."""
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import AsyncIterator, Callable
@@ -205,6 +206,15 @@ class IngestionPipelineService:
         """
         try:
             await self._execute_pipeline(job_id, document_id, url)
+        except asyncio.CancelledError:
+            logger.warning("Ingestion pipeline cancelled or timed out for job %s", job_id)
+            await asyncio.shield(
+                self._handle_failure(
+                    job_id,
+                    TimeoutError("Job timed out or was cancelled during execution"),
+                )
+            )
+            raise
         except Exception as exc:
             logger.exception("Ingestion pipeline failed for job %s: %s", job_id, exc)
             await self._handle_failure(job_id, exc)

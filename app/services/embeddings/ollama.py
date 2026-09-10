@@ -18,8 +18,8 @@ class OllamaEmbeddingClient:
         base_url: str | None = None,
         model: str | None = None,
         dimension: int = 1024,
-        batch_size: int = 16,
-        timeout: float = 30.0,
+        batch_size: int | None = None,
+        timeout: float | None = None,
         max_retries: int = 3,
         backoff_factor: float = 0.5,
         client: httpx.AsyncClient | None = None,
@@ -28,8 +28,14 @@ class OllamaEmbeddingClient:
         self.base_url = raw_base_url.rstrip("/")
         self.model = model or settings.embedding_model or "bge-m3"
         self.dimension = dimension
-        self.batch_size = max(1, batch_size)
-        self.timeout = timeout
+        configured_batch_size = (
+            batch_size if batch_size is not None else getattr(settings, "embedding_batch_size", 8)
+        )
+        self.batch_size = max(1, configured_batch_size)
+        configured_timeout = (
+            timeout if timeout is not None else getattr(settings, "embedding_timeout", 120.0)
+        )
+        self.timeout = configured_timeout
         self.max_retries = max(0, max_retries)
         self.backoff_factor = max(0.0, backoff_factor)
         self._client = client

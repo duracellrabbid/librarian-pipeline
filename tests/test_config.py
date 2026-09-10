@@ -16,6 +16,9 @@ def test_default_settings():
     assert settings.ollama_base_url == "http://localhost:11434"
     assert settings.embedding_model == "bge-m3"
     assert settings.max_batch_ingest_size == 10
+    assert settings.arq_job_timeout == 900
+    assert settings.embedding_batch_size == 8
+    assert settings.embedding_timeout == 120.0
 
 
 def test_derived_connection_urls():
@@ -53,6 +56,9 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("EMBEDDING_MODEL", "custom-embed-v1")
     monkeypatch.setenv("QDRANT_URL", "http://custom-qdrant:6333")
     monkeypatch.setenv("MAX_BATCH_INGEST_SIZE", "25")
+    monkeypatch.setenv("ARQ_JOB_TIMEOUT", "1200")
+    monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "4")
+    monkeypatch.setenv("EMBEDDING_TIMEOUT", "60.0")
 
     settings = Settings()
     assert settings.app_name == "custom-pipeline"
@@ -62,6 +68,9 @@ def test_env_override(monkeypatch):
     assert settings.embedding_model == "custom-embed-v1"
     assert settings.qdrant_url == "http://custom-qdrant:6333"
     assert settings.max_batch_ingest_size == 25
+    assert settings.arq_job_timeout == 1200
+    assert settings.embedding_batch_size == 4
+    assert settings.embedding_timeout == 60.0
 
 
 def test_invalid_port_validation(monkeypatch):
@@ -125,3 +134,22 @@ def test_empty_qdrant_api_key_normalized_to_none(monkeypatch):
     monkeypatch.setenv("QDRANT_API_KEY", "valid-secret-key")
     settings_valid = Settings()
     assert settings_valid.qdrant_api_key == "valid-secret-key"
+
+
+def test_invalid_new_settings_validation(monkeypatch):
+    """Verify validation error when new settings have non-positive or invalid values."""
+    from app.core.config import Settings
+
+    monkeypatch.setenv("ARQ_JOB_TIMEOUT", "0")
+    with pytest.raises(ValidationError):
+        Settings()
+
+    monkeypatch.setenv("ARQ_JOB_TIMEOUT", "900")
+    monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "0")
+    with pytest.raises(ValidationError):
+        Settings()
+
+    monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "8")
+    monkeypatch.setenv("EMBEDDING_TIMEOUT", "0")
+    with pytest.raises(ValidationError):
+        Settings()

@@ -49,11 +49,28 @@ class Settings(BaseSettings):
     qdrant_url: str | None = Field(default=None, description="Qdrant base URL")
     qdrant_api_key: str | None = Field(default=None, description="Qdrant API Key")
 
+    # ARQ Worker configuration
+    arq_job_timeout: int = Field(
+        default=900,
+        ge=1,
+        description="ARQ background job timeout in seconds",
+    )
+
     # Ollama configuration
     ollama_host: str = Field(default="localhost", description="Ollama host")
     ollama_port: int = Field(default=11434, ge=1, le=65535, description="Ollama port")
     ollama_base_url: str | None = Field(default=None, description="Ollama base URL")
     embedding_model: str = Field(default="bge-m3", description="Embedding model name")
+    embedding_batch_size: int = Field(
+        default=8,
+        ge=1,
+        description="Batch size for embedding generation requests",
+    )
+    embedding_timeout: float = Field(
+        default=120.0,
+        gt=0,
+        description="HTTP timeout for embedding generation requests in seconds",
+    )
 
     def model_post_init(self, __context: Any, /) -> None:
         """Construct dependent connection URLs if not explicitly provided."""

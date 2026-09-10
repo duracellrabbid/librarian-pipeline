@@ -550,3 +550,48 @@ async def test_update_document_metadata_not_found(mock_session: AsyncMock) -> No
             document_id=doc_id,
             title="Title",
         )
+
+
+@pytest.mark.asyncio
+async def test_pipeline_service_task_cancelled_handling(
+    mock_extractor: AsyncMock,
+    mock_chunker: MagicMock,
+    mock_embedding_client: AsyncMock,
+    mock_vector_store: AsyncMock,
+    session_factory,
+    mock_session: AsyncMock,
+) -> None:
+    """Test that asyncio.CancelledError transitions the job to FAILED and re-raises."""
+    import asyncio
+
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://example.com/timeout"
+
+    job = IngestionJob(
+        id=job_id,
+        document_id=doc_id,
+        status=JobStatus.EMBEDDING.value,
+        progress_percentage=70,
+    )
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = job
+    mock_session.execute.return_value = mock_result
+
+    # Simulate cancellation during embedding
+    mock_embedding_client.embed_batch.side_effect = asyncio.CancelledError()
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        chunker=mock_chunker,
+        embedding_client=mock_embedding_client,
+        vector_store=mock_vector_store,
+        session_factory=session_factory,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+    assert job.status == JobStatus.FAILED.value
+    assert "Job timed out or was cancelled" in (job.error_message or "")
