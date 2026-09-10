@@ -11,6 +11,7 @@ A modular, production-ready RAG ingestion pipeline on a single server, featuring
 - **Vector Database**: [Qdrant](https://qdrant.tech/) (v1.9+)
 - **Embeddings & LLM**: [Ollama](https://ollama.ai/) (`bge-m3`)
 - **Extraction**: [crawl4ai](https://github.com/unclecode/crawl4ai)
+- **Logging**: [Loguru](https://github.com/Delgan/loguru) (structured logging, stdlib interception, correlation IDs)
 - **Linter & Type Checking**: [Ruff](https://docs.astral.sh/ruff/)
 
 ---
@@ -29,7 +30,7 @@ rag-ingestion-pipeline/
 │   │   └── v1/           # API version 1 router and endpoints
 │   │       └── endpoints/
 │   │           └── documents.py # Document ingestion, status, check, delete
-│   ├── core/         # Core settings, database engine, session management, dispatcher protocol
+│   ├── core/         # Settings, logging (Loguru & intercept), database engine, dispatcher protocol
 │   ├── models/       # SQLModel database tables and domain entities
 │   ├── services/     # Services: repository, extractors, chunkers, embeddings, vector_store, pipeline
 │   │   ├── chunkers/     # Context-aware HybridMarkdownChunker
@@ -715,6 +716,25 @@ python scripts/extract_to_markdown.py https://en.wikipedia.org/wiki/Alan_Turing 
 python scripts/extract_to_markdown.py https://en.wikipedia.org/wiki/Alan_Turing -q
 ```
 
+
+---
+
+## Logging & Observability
+
+The application uses [Loguru](https://github.com/Delgan/loguru) for unified, structured, and contextual logging across API, pipeline, database, and background worker components.
+
+### Core Capabilities
+- **Standard Library Interception**: Framework and library loggers (`uvicorn`, `uvicorn.access`, `uvicorn.error`, `fastapi`, `arq`, `sqlalchemy`) are intercepted via `InterceptHandler` in `app/core/logging.py` and routed through Loguru, ensuring uniform formatting and log level controls.
+- **Environment-Aware Formatting**:
+  - **Development (`ENVIRONMENT=development`)**: Colorized, human-readable terminal output including timestamps, log levels, file/caller locations, structured `{extra}` dictionaries, and exception traces.
+  - **Production (`ENVIRONMENT=production`)**: Structured newline-delimited JSON (`serialize=True`) streamed to `sys.stdout`, designed for direct log aggregation in platforms like Datadog, CloudWatch, Grafana Loki, or ELK.
+- **HTTP Request Correlation (`X-Request-ID`)**:
+  - HTTP middleware in `app/main.py` extracts client-provided `X-Request-ID` headers or auto-generates a UUID4 identifier.
+  - Requests are wrapped in `logger.contextualize(request_id=request_id)`, binding the correlation ID to all log records produced during request execution.
+  - The `X-Request-ID` header is attached to all outgoing responses and exposed via CORS.
+- **Worker & Pipeline Context Binding**:
+  - ARQ background tasks (`app/workers/tasks.py`) and `IngestionPipelineService` (`app/services/pipeline.py`) wrap execution in `logger.contextualize(job_id=..., document_id=...)`.
+  - Logs emitted during extraction, chunking, embedding, and vector upsert automatically carry job and document tracking IDs.
 
 ---
 

@@ -51,6 +51,9 @@ Welcome to the **RAG Ingestion Pipeline** repository. All AI assistants, autonom
   pre-commit install --hook-type pre-commit --hook-type pre-push
   ```
 
+### 7. Tools during development
+- **Bash or Shell commands** - Use `rtk` to run commands 
+- **Context window** - Use `context-mode` for context window optimization.
 ---
 
 ## Repository Architecture & Layout
