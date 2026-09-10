@@ -1,6 +1,8 @@
 """Unit tests for FastAPI app setup, middleware, exception handlers, and lifespan in app/main.py."""
 
+import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -13,6 +15,7 @@ from app.services.repository import (
     JobNotFoundError,
 )
 from httpx import ASGITransport, AsyncClient
+from loguru import logger
 
 
 @pytest.fixture
@@ -107,6 +110,8 @@ class TestLifespan:
     @pytest.mark.asyncio
     async def test_lifespan_vector_store_initialization_failure_logged(self) -> None:
         test_app = create_app()
+        captured_messages: list[str] = []
+        sink_id = logger.add(lambda msg: captured_messages.append(msg.record["message"]))
 
         mock_dispatcher = AsyncMock()
         mock_dispatcher.close = AsyncMock()
@@ -116,16 +121,49 @@ class TestLifespan:
         mock_engine = AsyncMock()
         mock_engine.dispose = AsyncMock()
 
-        with (
-            patch("app.main.ArqTaskDispatcher", return_value=mock_dispatcher),
-            patch("app.main.QdrantVectorStore", return_value=mock_vector_store),
-            patch("app.main.engine", mock_engine),
-        ):
-            async with lifespan(test_app):
-                assert test_app.state.vector_store is mock_vector_store
+        try:
+            with (
+                patch("app.main.ArqTaskDispatcher", return_value=mock_dispatcher),
+                patch("app.main.QdrantVectorStore", return_value=mock_vector_store),
+                patch("app.main.engine", mock_engine),
+            ):
+                async with lifespan(test_app):
+                    assert test_app.state.vector_store is mock_vector_store
 
-            mock_vector_store.initialize_collection.assert_awaited_once()
-            mock_vector_store.close.assert_awaited_once()
+                mock_vector_store.initialize_collection.assert_awaited_once()
+                mock_vector_store.close.assert_awaited_once()
+                assert any(
+                    "failed to initialize qdrant collection" in msg.lower()
+                    for msg in captured_messages
+                )
+        finally:
+            logger.remove(sink_id)
+
+    @pytest.mark.asyncio
+    async def test_lifespan_logs_startup_and_shutdown_with_loguru(self) -> None:
+        test_app = create_app()
+        captured_messages: list[str] = []
+        sink_id = logger.add(lambda msg: captured_messages.append(msg.record["message"]))
+
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.close = AsyncMock()
+        mock_vector_store = AsyncMock()
+        mock_vector_store.close = AsyncMock()
+        mock_engine = AsyncMock()
+        mock_engine.dispose = AsyncMock()
+
+        try:
+            with (
+                patch("app.main.ArqTaskDispatcher", return_value=mock_dispatcher),
+                patch("app.main.QdrantVectorStore", return_value=mock_vector_store),
+                patch("app.main.engine", mock_engine),
+            ):
+                async with lifespan(test_app):
+                    assert any("startup" in msg.lower() for msg in captured_messages)
+
+                assert any("shutdown" in msg.lower() for msg in captured_messages)
+        finally:
+            logger.remove(sink_id)
 
 
 class TestExceptionHandlers:
@@ -214,3 +252,63 @@ class TestExceptionHandlers:
             resp = await client.get("/test-pipeline-error")
             assert resp.status_code == 500
             assert resp.json()["detail"] == "Unexpected pipeline failure"
+
+
+class TestRequestIdMiddleware:
+    """Tests verifying Request ID correlation middleware and Loguru contextualization."""
+
+    @pytest.mark.asyncio
+    async def test_generated_request_id_header(self, test_client: AsyncClient) -> None:
+        response = await test_client.get("/health")
+        assert response.status_code == 200
+        request_id = response.headers.get("X-Request-ID")
+        assert request_id is not None
+        parsed_uuid = uuid.UUID(request_id)
+        assert str(parsed_uuid) == request_id
+
+    @pytest.mark.asyncio
+    async def test_empty_request_id_generates_new_uuid(self, test_client: AsyncClient) -> None:
+        response = await test_client.get("/health", headers={"X-Request-ID": "   "})
+        assert response.status_code == 200
+        request_id = response.headers.get("X-Request-ID")
+        assert request_id is not None
+        assert request_id.strip() != ""
+        parsed_uuid = uuid.UUID(request_id)
+        assert str(parsed_uuid) == request_id
+
+    @pytest.mark.asyncio
+    async def test_preserve_custom_request_id_header(self, test_client: AsyncClient) -> None:
+        custom_id = "test-custom-request-id-12345"
+        response = await test_client.get("/health", headers={"X-Request-ID": custom_id})
+        assert response.status_code == 200
+        assert response.headers.get("X-Request-ID") == custom_id
+
+    @pytest.mark.asyncio
+    async def test_request_id_contextualized_in_logs(self) -> None:
+        test_app = create_app()
+        captured_records: list[Any] = []
+        sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="INFO")
+
+        try:
+
+            @test_app.get("/test-log-context")
+            async def log_endpoint() -> dict[str, str]:
+                logger.info("Inside test log context endpoint")
+                return {"status": "ok"}
+
+            transport = ASGITransport(app=test_app)
+            custom_id = "corr-id-xyz"
+            async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+                resp = await client.get("/test-log-context", headers={"X-Request-ID": custom_id})
+                assert resp.status_code == 200
+                assert resp.headers.get("X-Request-ID") == custom_id
+
+            matching = [
+                rec
+                for rec in captured_records
+                if rec["message"] == "Inside test log context endpoint"
+            ]
+            assert len(matching) == 1
+            assert matching[0]["extra"].get("request_id") == custom_id
+        finally:
+            logger.remove(sink_id)

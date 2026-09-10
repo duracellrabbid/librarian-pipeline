@@ -1,17 +1,19 @@
 """FastAPI application entry point, lifespan configuration, middleware, and exception handlers."""
 
-import logging
-from collections.abc import AsyncGenerator
+import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from loguru import logger
 
 from app.api.v1.router import api_v1_router
 from app.core.config import settings
 from app.core.db import engine
 from app.core.exceptions import DispatcherError, PipelineError, VectorStoreError
+from app.core.logging import setup_logging
 from app.services.repository import (
     DocumentNotFoundError,
     DuplicateActiveURLError,
@@ -20,22 +22,37 @@ from app.services.repository import (
 from app.services.vector_store.qdrant import QdrantVectorStore
 from app.workers.dispatcher import ArqTaskDispatcher
 
-logger = logging.getLogger(__name__)
+
+async def request_id_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Extract or generate X-Request-ID, bind to Loguru context, and set response header."""
+    raw_request_id = request.headers.get("X-Request-ID")
+    request_id = (
+        raw_request_id.strip() if raw_request_id and raw_request_id.strip() else str(uuid.uuid4())
+    )
+    with logger.contextualize(request_id=request_id):
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifespan resources (connections and services)."""
+    logger.info("Application startup: initializing resources")
     app.state.dispatcher = ArqTaskDispatcher()
     vector_store = QdrantVectorStore()
     try:
         await vector_store.initialize_collection()
     except Exception as exc:
-        logger.warning("Failed to initialize Qdrant collection on startup: %s", exc)
+        logger.warning("Failed to initialize Qdrant collection on startup: {}", exc)
     app.state.vector_store = vector_store
     try:
         yield
     finally:
+        logger.info("Application shutdown: cleaning up resources")
         dispatcher = getattr(app.state, "dispatcher", None)
         if dispatcher is not None and hasattr(dispatcher, "close"):
             await dispatcher.close()
@@ -113,6 +130,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application instance."""
+    setup_logging()
     is_production = settings.environment.lower() == "production"
 
     application = FastAPI(
@@ -123,6 +141,9 @@ def create_app() -> FastAPI:
         openapi_url=None if is_production else "/openapi.json",
     )
 
+    # Request ID correlation middleware
+    application.middleware("http")(request_id_middleware)
+
     # CORS configuration
     application.add_middleware(
         CORSMiddleware,
@@ -130,6 +151,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID"],
     )
 
     # Global exception handlers
