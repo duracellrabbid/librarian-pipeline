@@ -8,7 +8,6 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1.endpoints import documents
 from app.api.v1.router import api_v1_router
 from app.core.config import settings
 from app.core.db import engine
@@ -114,9 +113,14 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application instance."""
+    is_production = settings.environment.lower() == "production"
+
     application = FastAPI(
         title=settings.app_name,
         lifespan=lifespan,
+        docs_url=None if is_production else "/docs",
+        redoc_url=None if is_production else "/redoc",
+        openapi_url=None if is_production else "/openapi.json",
     )
 
     # CORS configuration
@@ -131,14 +135,15 @@ def create_app() -> FastAPI:
     # Global exception handlers
     register_exception_handlers(application)
 
-    # Core health check endpoint
-    @application.get("/health", tags=["health"])
-    async def health_check() -> dict[str, str]:
-        return {"status": "ok", "app": settings.app_name}
+    # Core health check endpoint (non-production only)
+    if not is_production:
+
+        @application.get("/health", tags=["health"])
+        async def health_check() -> dict[str, str]:
+            return {"status": "ok", "app": settings.app_name}
 
     # API Routing
     application.include_router(api_v1_router, prefix=settings.api_v1_prefix)
-    application.include_router(documents.router)
 
     return application
 

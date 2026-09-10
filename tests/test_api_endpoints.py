@@ -75,7 +75,16 @@ async def client(
 
 
 class TestIngestEndpoint:
-    """Tests for POST /documents/ingest endpoint."""
+    """Tests for POST /api/v1/documents/ingest endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_unprefixed_documents_route_returns_404(
+        self,
+        client: AsyncClient,
+    ) -> None:
+        payload = {"documents": [{"url": "https://example.com/test"}]}
+        response = await client.post("/documents/ingest", json=payload)
+        assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_successful_ingestion_submission(
@@ -91,7 +100,7 @@ class TestIngestEndpoint:
                 }
             ]
         }
-        response = await client.post("/documents/ingest", json=payload)
+        response = await client.post("/api/v1/documents/ingest", json=payload)
         assert response.status_code == 202
         data = response.json()
         assert data["status"] == JobStatus.PENDING.value
@@ -107,7 +116,7 @@ class TestIngestEndpoint:
         client: AsyncClient,
     ) -> None:
         payload = {"documents": [{"url": f"https://example.com/page{i}"} for i in range(11)]}
-        response = await client.post("/documents/ingest", json=payload)
+        response = await client.post("/api/v1/documents/ingest", json=payload)
         assert response.status_code == 422
         detail = response.json()["detail"].lower()
         assert "exceeds" in detail
@@ -124,7 +133,7 @@ class TestIngestEndpoint:
                 {"url": "https://example.com/dup", "title": "Second"},
             ]
         }
-        response = await client.post("/documents/ingest", json=payload)
+        response = await client.post("/api/v1/documents/ingest", json=payload)
         assert response.status_code == 202
         data = response.json()
         assert data["total_submitted"] == 2
@@ -143,7 +152,7 @@ class TestIngestEndpoint:
         await create_document_and_job(async_session, source_type="url", source_url=url)
 
         payload = {"documents": [{"url": url}]}
-        response = await client.post("/documents/ingest", json=payload)
+        response = await client.post("/api/v1/documents/ingest", json=payload)
         assert response.status_code == 202
         data = response.json()
         assert data["accepted_count"] == 0
@@ -164,7 +173,7 @@ class TestIngestEndpoint:
         await update_job_status(async_session, job_id=job.id, status=JobStatus.FAILED)
 
         payload = {"documents": [{"url": url}]}
-        response = await client.post("/documents/ingest", json=payload)
+        response = await client.post("/api/v1/documents/ingest", json=payload)
         assert response.status_code == 202
         data = response.json()
         assert data["accepted_count"] == 1
@@ -174,13 +183,13 @@ class TestIngestEndpoint:
     @pytest.mark.asyncio
     async def test_invalid_url_returns_422(self, client: AsyncClient) -> None:
         payload = {"documents": [{"url": "not-a-valid-url"}]}
-        response = await client.post("/documents/ingest", json=payload)
+        response = await client.post("/api/v1/documents/ingest", json=payload)
         assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_empty_documents_returns_422(self, client: AsyncClient) -> None:
         payload = {"documents": []}
-        response = await client.post("/documents/ingest", json=payload)
+        response = await client.post("/api/v1/documents/ingest", json=payload)
         assert response.status_code == 422
 
     @pytest.mark.asyncio
@@ -191,12 +200,12 @@ class TestIngestEndpoint:
     ) -> None:
         mock_dispatcher.enqueue_ingestion_job.side_effect = DispatcherError("Queue failure")
         payload = {"documents": [{"url": "https://en.wikipedia.org/wiki/Failure_Test"}]}
-        response = await client.post("/documents/ingest", json=payload)
+        response = await client.post("/api/v1/documents/ingest", json=payload)
         assert response.status_code == 500
 
 
 class TestStatusEndpoint:
-    """Tests for GET /documents/status/{main_job_id} endpoint."""
+    """Tests for GET /api/v1/documents/status/{main_job_id} endpoint."""
 
     @pytest.mark.asyncio
     async def test_status_existing_job(
@@ -212,7 +221,7 @@ class TestStatusEndpoint:
             async_session,
             [DocumentIngestItem(url="https://example.com/status-test")],
         )
-        response = await client.get(f"/documents/status/{batch.id}")
+        response = await client.get(f"/api/v1/documents/status/{batch.id}")
         assert response.status_code == 200
         data = response.json()
         assert data["main_job_id"] == str(batch.id)
@@ -226,7 +235,7 @@ class TestStatusEndpoint:
         client: AsyncClient,
     ) -> None:
         non_existent_id = uuid4()
-        response = await client.get(f"/documents/status/{non_existent_id}")
+        response = await client.get(f"/api/v1/documents/status/{non_existent_id}")
         assert response.status_code == 404
 
     @pytest.mark.asyncio
@@ -234,12 +243,12 @@ class TestStatusEndpoint:
         self,
         client: AsyncClient,
     ) -> None:
-        response = await client.get("/documents/status/invalid-uuid")
+        response = await client.get("/api/v1/documents/status/invalid-uuid")
         assert response.status_code == 422
 
 
 class TestCheckEndpoint:
-    """Tests for GET /documents/check endpoint."""
+    """Tests for GET /api/v1/documents/check endpoint."""
 
     @pytest.mark.asyncio
     async def test_check_active_url_exists(
@@ -253,7 +262,7 @@ class TestCheckEndpoint:
             source_type="url",
             source_url=url,
         )
-        response = await client.get("/documents/check", params={"url": url})
+        response = await client.get("/api/v1/documents/check", params={"url": url})
         assert response.status_code == 200
         data = response.json()
         assert data["exists"] is True
@@ -266,7 +275,7 @@ class TestCheckEndpoint:
         client: AsyncClient,
     ) -> None:
         response = await client.get(
-            "/documents/check",
+            "/api/v1/documents/check",
             params={"url": "https://example.com/absent"},
         )
         assert response.status_code == 200
@@ -291,7 +300,7 @@ class TestCheckEndpoint:
 
         await soft_delete_document(async_session, doc.id)
 
-        response = await client.get("/documents/check", params={"url": url})
+        response = await client.get("/api/v1/documents/check", params={"url": url})
         assert response.status_code == 200
         data = response.json()
         assert data["exists"] is False
@@ -303,12 +312,12 @@ class TestCheckEndpoint:
         self,
         client: AsyncClient,
     ) -> None:
-        response = await client.get("/documents/check")
+        response = await client.get("/api/v1/documents/check")
         assert response.status_code == 422
 
 
 class TestDeleteEndpoint:
-    """Tests for DELETE /documents/{doc_id} endpoint."""
+    """Tests for DELETE /api/v1/documents/{doc_id} endpoint."""
 
     @pytest.mark.asyncio
     async def test_successful_document_deletion(
@@ -322,7 +331,7 @@ class TestDeleteEndpoint:
             source_type="url",
             source_url="https://example.com/delete-test",
         )
-        response = await client.delete(f"/documents/{doc.id}")
+        response = await client.delete(f"/api/v1/documents/{doc.id}")
         assert response.status_code == 200
         data = response.json()
         assert data["doc_id"] == str(doc.id)
@@ -342,7 +351,7 @@ class TestDeleteEndpoint:
         self,
         client: AsyncClient,
     ) -> None:
-        response = await client.delete(f"/documents/{uuid4()}")
+        response = await client.delete(f"/api/v1/documents/{uuid4()}")
         assert response.status_code == 404
 
     @pytest.mark.asyncio
@@ -360,7 +369,7 @@ class TestDeleteEndpoint:
 
         await soft_delete_document(async_session, doc.id)
 
-        response = await client.delete(f"/documents/{doc.id}")
+        response = await client.delete(f"/api/v1/documents/{doc.id}")
         assert response.status_code == 404
 
     @pytest.mark.asyncio
@@ -378,7 +387,7 @@ class TestDeleteEndpoint:
             source_url="https://example.com/abort-test",
         )
 
-        response = await client.delete(f"/documents/{doc.id}")
+        response = await client.delete(f"/api/v1/documents/{doc.id}")
         assert response.status_code == 502
 
         # Verify DB record is NOT soft-deleted

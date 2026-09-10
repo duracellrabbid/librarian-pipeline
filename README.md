@@ -377,7 +377,7 @@ arq app.workers.tasks.WorkerSettings
 
 The system provides a validated REST API built with FastAPI exposing document ingestion, status tracking, existence checks, and soft-deletion with vector purging.
 
-Interactive API documentation (Swagger UI) is available at `http://localhost:8000/docs` (OpenAPI schema at `http://localhost:8000/openapi.json`).
+Interactive API documentation (Swagger UI) is available at `http://localhost:8000/docs` (OpenAPI schema at `http://localhost:8000/openapi.json`) and health check at `http://localhost:8000/health`. In production environments (`ENVIRONMENT=production`), `/docs`, `/redoc`, `/openapi.json`, and `/health` are automatically disabled for security.
 
 ### Running the API Server
 
@@ -385,14 +385,14 @@ Start the API server with Uvicorn:
 
 ```bash
 # Start FastAPI application
-uvicorn app.main.py:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### Endpoints Reference
 
-All endpoints are available at the root path (e.g. `/documents/...`) and under the versioned prefix (`/api/v1/documents/...`).
+All document ingestion endpoints are exposed under the canonical versioned prefix: `/api/v1/documents/...`.
 
-#### 1. Submit Batch Ingestion (`POST /documents/ingest`)
+#### 1. Submit Batch Ingestion (`POST /api/v1/documents/ingest`)
 
 Submits an array of web URLs for asynchronous scraping, chunking, embedding, and vector indexing under a single parent batch job.
 
@@ -437,12 +437,12 @@ Submits an array of web URLs for asynchronous scraping, chunking, embedding, and
   - **Failed documents**: URLs whose previous job resulted in `FAILED` are automatically accepted for re-ingestion.
 - **Example `curl`**:
   ```bash
-  curl -X POST "http://localhost:8000/documents/ingest" \
+  curl -X POST "http://localhost:8000/api/v1/documents/ingest" \
     -H "Content-Type: application/json" \
     -d '{"documents": [{"url": "https://en.wikipedia.org/wiki/Artificial_intelligence", "title": "AI"}]}'
   ```
 
-#### 2. Get Batch Job Status (`GET /documents/status/{main_job_id}`)
+#### 2. Get Batch Job Status (`GET /api/v1/documents/status/{main_job_id}`)
 
 Retrieves aggregate progress percentage, overall lifecycle status, individual document progress, and skipped details for a batch ingestion job.
 
@@ -488,10 +488,10 @@ Retrieves aggregate progress percentage, overall lifecycle status, individual do
   - `404 Not Found`: Batch job does not exist.
 - **Example `curl`**:
   ```bash
-  curl -X GET "http://localhost:8000/documents/status/7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a"
+  curl -X GET "http://localhost:8000/api/v1/documents/status/7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a"
   ```
 
-#### 3. Check Document Existence (`GET /documents/check`)
+#### 3. Check Document Existence (`GET /api/v1/documents/check`)
 
 Checks whether a target URL is currently actively indexed.
 
@@ -516,10 +516,10 @@ Checks whether a target URL is currently actively indexed.
     ```
 - **Example `curl`**:
   ```bash
-  curl -X GET "http://localhost:8000/documents/check?url=https://en.wikipedia.org/wiki/Artificial_intelligence"
+  curl -X GET "http://localhost:8000/api/v1/documents/check?url=https://en.wikipedia.org/wiki/Artificial_intelligence"
   ```
 
-#### 4. Delete Document & Purge Vectors (`DELETE /documents/{doc_id}`)
+#### 4. Delete Document & Purge Vectors (`DELETE /api/v1/documents/{doc_id}`)
 
 Purges all vector embeddings from Qdrant matching `doc_id` and soft-deletes the PostgreSQL document record (`deleted_at = NOW()`), allowing the URL to be re-ingested in the future.
 
@@ -538,7 +538,7 @@ Purges all vector embeddings from Qdrant matching `doc_id` and soft-deletes the 
   - `502 Bad Gateway`: Vector store failed to purge embeddings (preserves PostgreSQL record).
 - **Example `curl`**:
   ```bash
-  curl -X DELETE "http://localhost:8000/documents/0d635fc2-d1d4-4cf5-94cf-6c0756778f28"
+  curl -X DELETE "http://localhost:8000/api/v1/documents/0d635fc2-d1d4-4cf5-94cf-6c0756778f28"
   ```
 
 ---
@@ -586,6 +586,7 @@ Key environment configuration variables:
 | `EMBEDDING_MODEL` | `bge-m3` | Embedding model identifier |
 | `EMBEDDING_BATCH_SIZE` | `8` | Chunk batch size per embedding HTTP request |
 | `EMBEDDING_TIMEOUT` | `120.0` | HTTP client request timeout in seconds for embedding generation |
+| `ENVIRONMENT` | `development` | Runtime environment (`development`, `test`, `production`). Gating `/docs`, `/redoc`, `/openapi.json`, and `/health` to non-production only |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ### 3. Launch Local Infrastructure
@@ -692,7 +693,14 @@ pre-commit run --all-files --hook-stage pre-commit
 pre-commit run --all-files --hook-stage pre-push
 ```
 
-### 6. Standalone Content Extraction CLI
+### 6. Continuous Integration (GitHub Actions)
+
+A GitHub Actions workflow (`.github/workflows/ci.yml`) runs on all pushes and pull requests to `main` and topic branches (`feat/**`, `fix/**`, `refactor/**`):
+- **Linter**: `ruff check .`
+- **Formatter**: `ruff format --check .`
+- **Quality Gate**: `pytest --cov=app --cov-fail-under=100` ensuring 100% statement coverage.
+
+### 7. Standalone Content Extraction CLI
 
 Extract and sanitize web content directly to Markdown for isolated testing of `Crawl4AIExtractor`:
 

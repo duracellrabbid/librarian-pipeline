@@ -92,7 +92,9 @@ class TestCompleteDocumentLifecycle:
         target_url = "https://en.wikipedia.org/wiki/Retrieval-augmented_generation"
 
         # 1. Verify existence returns false before ingestion
-        check_resp = await integration_client.get("/documents/check", params={"url": target_url})
+        check_resp = await integration_client.get(
+            "/api/v1/documents/check", params={"url": target_url}
+        )
         assert check_resp.status_code == 200
         check_data = check_resp.json()
         assert check_data["exists"] is False
@@ -101,7 +103,7 @@ class TestCompleteDocumentLifecycle:
 
         # 2. Submit document for ingestion in batch
         ingest_resp = await integration_client.post(
-            "/documents/ingest",
+            "/api/v1/documents/ingest",
             json={"documents": [{"url": target_url, "title": "RAG Article"}]},
         )
         assert ingest_resp.status_code == 202
@@ -113,7 +115,7 @@ class TestCompleteDocumentLifecycle:
         mock_dispatcher.enqueue_ingestion_job.assert_awaited_once()
 
         # Retrieve child job and document ID via batch status endpoint
-        status_resp = await integration_client.get(f"/documents/status/{main_job_id}")
+        status_resp = await integration_client.get(f"/api/v1/documents/status/{main_job_id}")
         assert status_resp.status_code == 200
         status_data = status_resp.json()
         assert status_data["main_job_id"] == main_job_id
@@ -125,7 +127,9 @@ class TestCompleteDocumentLifecycle:
         assert status_data["jobs"][0]["status"] == JobStatus.PENDING.value
 
         # 3. Verify existence now returns true with status PENDING
-        check_resp2 = await integration_client.get("/documents/check", params={"url": target_url})
+        check_resp2 = await integration_client.get(
+            "/api/v1/documents/check", params={"url": target_url}
+        )
         assert check_resp2.status_code == 200
         check_data2 = check_resp2.json()
         assert check_data2["exists"] is True
@@ -134,7 +138,7 @@ class TestCompleteDocumentLifecycle:
 
         # 4. Attempt duplicate ingestion submission -> URL is skipped (currently ingesting)
         dup_resp = await integration_client.post(
-            "/documents/ingest",
+            "/api/v1/documents/ingest",
             json={"documents": [{"url": target_url, "title": "RAG Duplicate"}]},
         )
         assert dup_resp.status_code == 202
@@ -153,14 +157,14 @@ class TestCompleteDocumentLifecycle:
         )
 
         # Inspect updated batch job status
-        status_resp2 = await integration_client.get(f"/documents/status/{main_job_id}")
+        status_resp2 = await integration_client.get(f"/api/v1/documents/status/{main_job_id}")
         assert status_resp2.status_code == 200
         assert status_resp2.json()["status"] == BatchJobStatus.COMPLETED.value
         assert status_resp2.json()["overall_progress_percentage"] == 100
         assert status_resp2.json()["jobs"][0]["status"] == JobStatus.INDEXED.value
 
         # 6. Soft-delete document and purge vectors
-        del_resp = await integration_client.delete(f"/documents/{doc_id}")
+        del_resp = await integration_client.delete(f"/api/v1/documents/{doc_id}")
         assert del_resp.status_code == 200
         del_data = del_resp.json()
         assert del_data["doc_id"] == doc_id
@@ -168,22 +172,24 @@ class TestCompleteDocumentLifecycle:
         mock_vector_store.delete_by_doc_id.assert_awaited_once_with(doc_id)
 
         # 7. Verify existence returns false after soft-deletion
-        check_resp3 = await integration_client.get("/documents/check", params={"url": target_url})
+        check_resp3 = await integration_client.get(
+            "/api/v1/documents/check", params={"url": target_url}
+        )
         assert check_resp3.status_code == 200
         assert check_resp3.json()["exists"] is False
 
         # Verify deleting again returns 404
-        del_again = await integration_client.delete(f"/documents/{doc_id}")
+        del_again = await integration_client.delete(f"/api/v1/documents/{doc_id}")
         assert del_again.status_code == 404
 
         # 8. Verify re-ingestion is permitted after soft-deletion
         reingest_resp = await integration_client.post(
-            "/documents/ingest",
+            "/api/v1/documents/ingest",
             json={"documents": [{"url": target_url, "title": "RAG Re-ingested"}]},
         )
         assert reingest_resp.status_code == 202
         new_batch_id = reingest_resp.json()["main_job_id"]
-        status_reingest = await integration_client.get(f"/documents/status/{new_batch_id}")
+        status_reingest = await integration_client.get(f"/api/v1/documents/status/{new_batch_id}")
         new_doc_id = status_reingest.json()["jobs"][0]["doc_id"]
         assert new_doc_id != doc_id
 
@@ -235,7 +241,7 @@ class TestCompleteDocumentLifecycle:
 
         # 1. Submit batch with duplicate URL in request
         resp1 = await integration_client.post(
-            "/documents/ingest",
+            "/api/v1/documents/ingest",
             json={
                 "documents": [
                     {"url": url1, "title": "Doc 1"},
@@ -251,7 +257,7 @@ class TestCompleteDocumentLifecycle:
         assert resp1.json()["skipped_count"] == 1
 
         # Check batch1 status
-        status1 = (await integration_client.get(f"/documents/status/{batch1_id}")).json()
+        status1 = (await integration_client.get(f"/api/v1/documents/status/{batch1_id}")).json()
         assert len(status1["jobs"]) == 2
         assert len(status1["skipped"]) == 1
         assert status1["skipped"][0]["reason"] == "duplicate_in_request"
@@ -274,7 +280,8 @@ class TestCompleteDocumentLifecycle:
         )
 
         # Re-check batch1 status -> PARTIALLY_FAILED
-        status1_updated = (await integration_client.get(f"/documents/status/{batch1_id}")).json()
+        status1_res = await integration_client.get(f"/api/v1/documents/status/{batch1_id}")
+        status1_updated = status1_res.json()
         assert status1_updated["status"] == BatchJobStatus.PARTIALLY_FAILED.value
         assert status1_updated["completed_jobs"] == 1
         assert status1_updated["failed_jobs"] == 1
@@ -285,7 +292,7 @@ class TestCompleteDocumentLifecycle:
         # - url3 is brand new -> should be accepted
         url3 = "https://example.com/doc3"
         resp2 = await integration_client.post(
-            "/documents/ingest",
+            "/api/v1/documents/ingest",
             json={
                 "documents": [
                     {"url": url1, "title": "Doc 1 Again"},
@@ -301,7 +308,7 @@ class TestCompleteDocumentLifecycle:
         assert batch2_data["skipped_count"] == 1
 
         batch2_id = batch2_data["main_job_id"]
-        status2 = (await integration_client.get(f"/documents/status/{batch2_id}")).json()
+        status2 = (await integration_client.get(f"/api/v1/documents/status/{batch2_id}")).json()
         assert len(status2["skipped"]) == 1
         assert status2["skipped"][0]["url"] == url1
         assert status2["skipped"][0]["reason"] == "already_ingested"

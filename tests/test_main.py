@@ -39,6 +39,31 @@ class TestAppConfiguration:
         assert payload["app"] == settings.app_name
 
     @pytest.mark.asyncio
+    async def test_docs_and_health_available_in_development(self, test_client: AsyncClient) -> None:
+        docs_resp = await test_client.get("/docs")
+        assert docs_resp.status_code == 200
+        health_resp = await test_client.get("/health")
+        assert health_resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_docs_and_health_disabled_in_production(self) -> None:
+        with patch.object(settings, "environment", "production"):
+            prod_app = create_app()
+            transport = ASGITransport(app=prod_app)
+            async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+                docs_resp = await client.get("/docs")
+                assert docs_resp.status_code == 404
+
+                redoc_resp = await client.get("/redoc")
+                assert redoc_resp.status_code == 404
+
+                openapi_resp = await client.get("/openapi.json")
+                assert openapi_resp.status_code == 404
+
+                health_resp = await client.get("/health")
+                assert health_resp.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_cors_middleware_headers(self, test_client: AsyncClient) -> None:
         response = await test_client.options(
             "/health",
