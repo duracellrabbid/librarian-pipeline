@@ -1,5 +1,6 @@
 """Unit tests for task dispatcher protocol and implementations."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -15,6 +16,7 @@ from app.workers.tasks import (
     startup,
 )
 from arq.connections import RedisSettings
+from loguru import logger
 
 
 def test_dispatcher_error_inheritance_and_attributes() -> None:
@@ -345,3 +347,99 @@ def test_coerce_uuid() -> None:
 def test_worker_settings_job_timeout() -> None:
     """Test WorkerSettings.job_timeout matches arq_job_timeout setting (900s)."""
     assert WorkerSettings.job_timeout == 900
+
+
+@pytest.mark.asyncio
+async def test_run_ingestion_pipeline_contextualizes_job_and_document_id() -> None:
+    """Test that run_ingestion_pipeline binds job_id and document_id in Loguru extra."""
+    captured_records: list[Any] = []
+    sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="DEBUG")
+    job_id = uuid4()
+    doc_id = uuid4()
+
+    mock_service = AsyncMock()
+
+    async def fake_run(*args: Any, **kwargs: Any) -> None:
+        logger.info("Executing pipeline service run")
+
+    mock_service.run.side_effect = fake_run
+    ctx = {"pipeline_service": mock_service}
+
+    try:
+        await run_ingestion_pipeline(ctx, job_id, doc_id, "https://example.com")
+        log = next(r for r in captured_records if r["message"] == "Executing pipeline service run")
+        assert log["extra"].get("job_id") == str(job_id)
+        assert log["extra"].get("document_id") == str(doc_id)
+    finally:
+        logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_run_ingestion_pipeline_fallback_warning_contextualized() -> None:
+    """Test that fallback warning binds job_id and document_id in Loguru extra."""
+    captured_records: list[Any] = []
+    sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="WARNING")
+    job_id = uuid4()
+    doc_id = uuid4()
+
+    try:
+        with patch.dict("sys.modules", {"app.services.pipeline": None}):
+            ctx: dict[str, object] = {}
+            await run_ingestion_pipeline(ctx, job_id, doc_id, "https://example.com")
+
+        log = next(
+            r for r in captured_records if "IngestionPipelineService not available" in r["message"]
+        )
+        assert f"skipping pipeline run for job {job_id}" in log["message"]
+        assert log["extra"].get("job_id") == str(job_id)
+        assert log["extra"].get("document_id") == str(doc_id)
+    finally:
+        logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_worker_startup_and_shutdown_logs_with_loguru() -> None:
+    """Test that worker startup and shutdown emit logs via Loguru."""
+    captured_records: list[Any] = []
+    sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="INFO")
+    ctx: dict[str, object] = {}
+
+    try:
+        await startup(ctx)
+        await shutdown(ctx)
+
+        startup_logs = [r for r in captured_records if "ARQ worker started" in r["message"]]
+        shutdown_logs = [r for r in captured_records if "ARQ worker shutting down" in r["message"]]
+
+        assert len(startup_logs) == 1
+        assert len(shutdown_logs) == 1
+    finally:
+        logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_worker_startup_vector_store_error_logs_warning_with_loguru() -> None:
+    """Test that vector store initialization failure in startup logs via Loguru."""
+    captured_records: list[Any] = []
+    sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="WARNING")
+    ctx: dict[str, object] = {}
+
+    mock_vector_store = AsyncMock()
+    mock_vector_store.initialize_collection.side_effect = RuntimeError("Qdrant connection lost")
+
+    try:
+        with patch(
+            "app.services.vector_store.qdrant.QdrantVectorStore",
+            return_value=mock_vector_store,
+        ):
+            await startup(ctx)
+
+        warning_logs = [
+            r
+            for r in captured_records
+            if "Could not initialize Qdrant vector store in worker startup" in r["message"]
+        ]
+        assert len(warning_logs) == 1
+        assert "Qdrant connection lost" in warning_logs[0]["message"]
+    finally:
+        logger.remove(sink_id)

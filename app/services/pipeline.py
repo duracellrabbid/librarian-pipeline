@@ -2,12 +2,12 @@
 
 import asyncio
 import hashlib
-import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
 
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
@@ -17,8 +17,6 @@ from app.services.embeddings.base import BaseEmbeddingClient
 from app.services.extractors.base import BaseExtractor, ExtractedDocument
 from app.services.repository import update_document_metadata, update_job_status
 from app.services.vector_store.base import BaseVectorStore
-
-logger = logging.getLogger(__name__)
 
 
 class IngestionPipelineService:
@@ -186,7 +184,7 @@ class IngestionPipelineService:
             )
         except Exception as db_exc:
             logger.exception(
-                "Failed to update FAILED status for job %s: %s",
+                "Failed to update FAILED status for job {}: {}",
                 job_id,
                 db_exc,
             )
@@ -204,17 +202,18 @@ class IngestionPipelineService:
             document_id: Unique identifier of the associated document.
             url: Target web URL to extract, chunk, embed, and store.
         """
-        try:
-            await self._execute_pipeline(job_id, document_id, url)
-        except asyncio.CancelledError:
-            logger.warning("Ingestion pipeline cancelled or timed out for job %s", job_id)
-            await asyncio.shield(
-                self._handle_failure(
-                    job_id,
-                    TimeoutError("Job timed out or was cancelled during execution"),
+        with logger.contextualize(job_id=str(job_id), document_id=str(document_id)):
+            try:
+                await self._execute_pipeline(job_id, document_id, url)
+            except asyncio.CancelledError:
+                logger.warning("Ingestion pipeline cancelled or timed out for job {}", job_id)
+                await asyncio.shield(
+                    self._handle_failure(
+                        job_id,
+                        TimeoutError("Job timed out or was cancelled during execution"),
+                    )
                 )
-            )
-            raise
-        except Exception as exc:
-            logger.exception("Ingestion pipeline failed for job %s: %s", job_id, exc)
-            await self._handle_failure(job_id, exc)
+                raise
+            except Exception as exc:
+                logger.exception("Ingestion pipeline failed for job {}: {}", job_id, exc)
+                await self._handle_failure(job_id, exc)

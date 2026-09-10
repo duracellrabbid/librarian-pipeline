@@ -1,6 +1,7 @@
 """Unit tests for IngestionPipelineService."""
 
 from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from app.services.chunkers.base import DocumentChunk
 from app.services.extractors.base import ExtractedDocument
 from app.services.pipeline import IngestionPipelineService
 from app.services.repository import DocumentNotFoundError, update_document_metadata
+from loguru import logger
 
 
 @pytest.fixture
@@ -595,3 +597,211 @@ async def test_pipeline_service_task_cancelled_handling(
 
     assert job.status == JobStatus.FAILED.value
     assert "Job timed out or was cancelled" in (job.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_service_run_contextualizes_job_and_document_id(
+    mock_extractor: AsyncMock,
+    mock_chunker: MagicMock,
+    mock_embedding_client: AsyncMock,
+    mock_vector_store: AsyncMock,
+    session_factory,
+    mock_session: AsyncMock,
+) -> None:
+    """Test that IngestionPipelineService.run contextualizes logger with job_id and document_id."""
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://example.com/test-context"
+
+    captured_records: list[Any] = []
+    sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="INFO")
+
+    async def extract_and_log(_url: str) -> ExtractedDocument:
+        logger.info("Inside extraction step")
+        return ExtractedDocument(
+            content="# Content",
+            title="Title",
+            source_url=_url,
+            metadata={},
+        )
+
+    mock_extractor.extract.side_effect = extract_and_log
+
+    job = IngestionJob(
+        id=job_id,
+        document_id=doc_id,
+        status=JobStatus.PENDING.value,
+        progress_percentage=0,
+    )
+    doc = Document(id=doc_id, source_type="url", source_url=url)
+
+    def execute_side_effect(stmt):
+        mock_result = MagicMock()
+        stmt_str = str(stmt)
+        if "ingestion_jobs" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = job
+        elif "documents" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = doc
+        return mock_result
+
+    mock_session.execute.side_effect = execute_side_effect
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        chunker=mock_chunker,
+        embedding_client=mock_embedding_client,
+        vector_store=mock_vector_store,
+        session_factory=session_factory,
+    )
+
+    try:
+        await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+        extract_log = next(r for r in captured_records if r["message"] == "Inside extraction step")
+        assert extract_log["extra"].get("job_id") == str(job_id)
+        assert extract_log["extra"].get("document_id") == str(doc_id)
+    finally:
+        logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_service_failure_logs_exception_with_loguru(
+    mock_extractor: AsyncMock,
+    mock_chunker: MagicMock,
+    mock_embedding_client: AsyncMock,
+    mock_vector_store: AsyncMock,
+    session_factory,
+    mock_session: AsyncMock,
+) -> None:
+    """Test that pipeline execution failure logs exception via Loguru with extra context."""
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://example.com/fail-log"
+
+    captured_records: list[Any] = []
+    sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="ERROR")
+
+    job = IngestionJob(
+        id=job_id,
+        document_id=doc_id,
+        status=JobStatus.PENDING.value,
+        progress_percentage=0,
+    )
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = job
+    mock_session.execute.return_value = mock_result
+
+    mock_extractor.extract.side_effect = ExtractionError("Extraction broke", url=url)
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        chunker=mock_chunker,
+        embedding_client=mock_embedding_client,
+        vector_store=mock_vector_store,
+        session_factory=session_factory,
+    )
+
+    try:
+        await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+        err_log = next(
+            r
+            for r in captured_records
+            if f"Ingestion pipeline failed for job {job_id}:" in r["message"]
+        )
+        assert err_log["extra"].get("job_id") == str(job_id)
+        assert err_log["extra"].get("document_id") == str(doc_id)
+        assert err_log["exception"] is not None
+    finally:
+        logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_service_timeout_logs_warning_with_loguru(
+    mock_extractor: AsyncMock,
+    mock_chunker: MagicMock,
+    mock_embedding_client: AsyncMock,
+    mock_vector_store: AsyncMock,
+    session_factory,
+    mock_session: AsyncMock,
+) -> None:
+    """Test that cancellation or timeout logs warning via Loguru with extra context."""
+    import asyncio
+
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://example.com/cancel-log"
+
+    captured_records: list[Any] = []
+    sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="WARNING")
+
+    job = IngestionJob(
+        id=job_id,
+        document_id=doc_id,
+        status=JobStatus.PENDING.value,
+        progress_percentage=0,
+    )
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = job
+    mock_session.execute.return_value = mock_result
+
+    mock_extractor.extract.side_effect = asyncio.CancelledError()
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        chunker=mock_chunker,
+        embedding_client=mock_embedding_client,
+        vector_store=mock_vector_store,
+        session_factory=session_factory,
+    )
+
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+        warn_log = next(
+            r
+            for r in captured_records
+            if f"Ingestion pipeline cancelled or timed out for job {job_id}" in r["message"]
+        )
+        assert warn_log["extra"].get("job_id") == str(job_id)
+        assert warn_log["extra"].get("document_id") == str(doc_id)
+    finally:
+        logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_service_db_failure_in_handle_failure_logs_exception(
+    mock_extractor: AsyncMock,
+    session_factory,
+    mock_session: AsyncMock,
+) -> None:
+    """Test that db exception in _handle_failure logs via Loguru with extra context."""
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://example.com/db-fail-log"
+
+    captured_records: list[Any] = []
+    sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="ERROR")
+
+    mock_extractor.extract.side_effect = Exception("Original error")
+    mock_session.execute.side_effect = RuntimeError("Database crash")
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        session_factory=session_factory,
+    )
+
+    try:
+        await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+        db_err_log = next(
+            r
+            for r in captured_records
+            if f"Failed to update FAILED status for job {job_id}: Database crash" in r["message"]
+        )
+        assert db_err_log["extra"].get("job_id") == str(job_id)
+        assert db_err_log["extra"].get("document_id") == str(doc_id)
+        assert db_err_log["exception"] is not None
+    finally:
+        logger.remove(sink_id)

@@ -1,15 +1,13 @@
 """ARQ worker task runner and worker configuration settings."""
 
-import logging
 from typing import Any
 from uuid import UUID
 
 from arq.connections import RedisSettings
+from loguru import logger
 
 from app.core.config import get_settings
 from app.workers.dispatcher import get_redis_settings
-
-logger = logging.getLogger(__name__)
 
 
 def coerce_uuid(val: str | UUID) -> UUID:
@@ -39,8 +37,8 @@ async def startup(ctx: dict[str, Any]) -> None:
         await vector_store.initialize_collection()
         ctx["vector_store"] = vector_store
     except Exception as exc:
-        logger.warning("Could not initialize Qdrant vector store in worker startup: %s", exc)
-    logger.info("ARQ worker started for %s environment", settings.environment)
+        logger.warning("Could not initialize Qdrant vector store in worker startup: {}", exc)
+    logger.info("ARQ worker started for {} environment", settings.environment)
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -72,25 +70,26 @@ async def run_ingestion_pipeline(
     parsed_job_id = coerce_uuid(job_id)
     parsed_doc_id = coerce_uuid(document_id)
 
-    service = ctx.get("pipeline_service")
-    if service is None:
-        try:
-            from app.services.pipeline import IngestionPipelineService
+    with logger.contextualize(job_id=str(parsed_job_id), document_id=str(parsed_doc_id)):
+        service = ctx.get("pipeline_service")
+        if service is None:
+            try:
+                from app.services.pipeline import IngestionPipelineService
 
-            vector_store = ctx.get("vector_store")
-            service = IngestionPipelineService(vector_store=vector_store)
-        except (ImportError, AttributeError):
-            logger.warning(
-                "IngestionPipelineService not available; skipping pipeline run for job %s",
-                parsed_job_id,
-            )
-            return
+                vector_store = ctx.get("vector_store")
+                service = IngestionPipelineService(vector_store=vector_store)
+            except (ImportError, AttributeError):
+                logger.warning(
+                    "IngestionPipelineService not available; skipping pipeline run for job {}",
+                    parsed_job_id,
+                )
+                return
 
-    await service.run(
-        job_id=parsed_job_id,
-        document_id=parsed_doc_id,
-        url=url,
-    )
+        await service.run(
+            job_id=parsed_job_id,
+            document_id=parsed_doc_id,
+            url=url,
+        )
 
 
 class WorkerSettings:
