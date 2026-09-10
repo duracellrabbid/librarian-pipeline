@@ -205,6 +205,7 @@ async def test_pipeline_service_successful_end_to_end(
     mock_embedding_client.embed_batch.assert_awaited_once_with(
         ["Sample Document This is test content."]
     )
+    mock_vector_store.initialize_collection.assert_awaited_once()
     mock_vector_store.upsert_chunks.assert_awaited_once()
 
     # Verify Document updated
@@ -387,6 +388,48 @@ async def test_pipeline_service_vector_store_failure(
 
     assert job.status == JobStatus.FAILED.value
     assert "Qdrant connection dropped" in (job.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_run_vector_store_init_error_transitions_to_failed(
+    mock_extractor: AsyncMock,
+    mock_chunker: MagicMock,
+    mock_embedding_client: AsyncMock,
+    mock_vector_store: AsyncMock,
+    mock_session: AsyncMock,
+    session_factory,
+) -> None:
+    """Test that failure during vector_store.initialize_collection marks job FAILED."""
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://example.com/fail-vec-init"
+
+    job = IngestionJob(
+        id=job_id,
+        document_id=doc_id,
+        status=JobStatus.PENDING.value,
+        progress_percentage=0,
+    )
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = job
+    mock_session.execute.return_value = mock_result
+
+    mock_vector_store.initialize_collection.side_effect = VectorStoreError("Qdrant init failed")
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        chunker=mock_chunker,
+        embedding_client=mock_embedding_client,
+        vector_store=mock_vector_store,
+        session_factory=session_factory,
+    )
+
+    await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+    assert job.status == JobStatus.FAILED.value
+    assert "Qdrant init failed" in (job.error_message or "")
+    mock_vector_store.upsert_chunks.assert_not_called()
 
 
 @pytest.mark.asyncio

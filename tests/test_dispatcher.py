@@ -181,6 +181,62 @@ async def test_worker_lifecycle_startup_and_shutdown() -> None:
 
 
 @pytest.mark.asyncio
+async def test_worker_lifecycle_startup_and_shutdown_with_vector_store() -> None:
+    """Test worker startup initializes vector store and shutdown closes it."""
+    mock_vector_store = AsyncMock()
+    mock_vector_store.close = AsyncMock()
+
+    patch_qdrant = patch(
+        "app.services.vector_store.qdrant.QdrantVectorStore",
+        return_value=mock_vector_store,
+    )
+    with patch_qdrant:
+        ctx: dict[str, object] = {}
+        await startup(ctx)
+        assert "settings" in ctx
+        assert ctx.get("vector_store") is mock_vector_store
+        mock_vector_store.initialize_collection.assert_awaited_once()
+
+        await shutdown(ctx)
+        mock_vector_store.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_lifecycle_startup_handles_vector_store_error() -> None:
+    """Test worker startup logs warning and proceeds if vector store initialization fails."""
+    mock_vector_store = AsyncMock()
+    mock_vector_store.initialize_collection.side_effect = Exception("Qdrant unreachable")
+
+    patch_qdrant = patch(
+        "app.services.vector_store.qdrant.QdrantVectorStore",
+        return_value=mock_vector_store,
+    )
+    with patch_qdrant:
+        ctx: dict[str, object] = {}
+        await startup(ctx)
+        assert "settings" in ctx
+        assert "vector_store" not in ctx
+
+        await shutdown(ctx)
+
+
+@pytest.mark.asyncio
+async def test_run_ingestion_pipeline_uses_vector_store_from_ctx() -> None:
+    """Test run_ingestion_pipeline passes vector_store from ctx to IngestionPipelineService."""
+    mock_service_instance = AsyncMock()
+    mock_service_cls = MagicMock(return_value=mock_service_instance)
+    mock_module = MagicMock(IngestionPipelineService=mock_service_cls)
+    mock_vec = MagicMock()
+
+    with patch.dict("sys.modules", {"app.services.pipeline": mock_module}):
+        ctx: dict[str, object] = {"vector_store": mock_vec}
+        job_id = uuid4()
+        doc_id = uuid4()
+        await run_ingestion_pipeline(ctx, job_id, doc_id, "https://example.com")
+        mock_service_cls.assert_called_once_with(vector_store=mock_vec)
+
+
+@pytest.mark.asyncio
 async def test_run_ingestion_pipeline_with_ctx_service() -> None:
     """Test run_ingestion_pipeline delegates to pipeline_service in ctx."""
     mock_service = AsyncMock()

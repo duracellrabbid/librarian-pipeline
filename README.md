@@ -233,7 +233,8 @@ The semantic storage and retrieval layer pairs local multilingual dense embeddin
 
 ### 2. Qdrant Vector Store Adapter (`app.services.vector_store`)
 
-- **Collection Lifecycle**: Idempotently initializes the `knowledge_base` collection configured with Cosine distance and 1024 vector dimensions.
+- **Collection Lifecycle**: Idempotently initializes the `knowledge_base` collection configured with Cosine distance and 1024 vector dimensions. Automatic initialization is performed during FastAPI lifespan, ARQ worker startup, and directly in `IngestionPipelineService` before upserting chunks.
+- **Connection Security**: Normalizes empty or unset `QDRANT_API_KEY` environment variables to `None` to avoid insecure connection warnings over standard HTTP.
 - **Keyword Payload Index**: Automatically ensures a keyword schema index on `doc_id` exists to power sub-millisecond filtered queries and deletions.
 - **Deterministic Point UUIDs**: Uses RFC 4122 `uuid5` derived from `uuid.NAMESPACE_DNS` and `"{doc_id}:{chunk_index}"` to guarantee idempotent upserts without point duplication.
 - **Comprehensive Payloads**: Stores rich queryable metadata alongside each vector: `doc_id`, `chunk_index`, `text`, `source_url`, `heading_path`, `char_count`, and `token_count`.

@@ -1,5 +1,6 @@
 """FastAPI application entry point, lifespan configuration, middleware, and exception handlers."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -20,12 +21,19 @@ from app.services.repository import (
 from app.services.vector_store.qdrant import QdrantVectorStore
 from app.workers.dispatcher import ArqTaskDispatcher
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application lifespan resources (connections and services)."""
     app.state.dispatcher = ArqTaskDispatcher()
-    app.state.vector_store = QdrantVectorStore()
+    vector_store = QdrantVectorStore()
+    try:
+        await vector_store.initialize_collection()
+    except Exception as exc:
+        logger.warning("Failed to initialize Qdrant collection on startup: %s", exc)
+    app.state.vector_store = vector_store
     try:
         yield
     finally:

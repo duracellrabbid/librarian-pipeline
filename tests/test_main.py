@@ -74,9 +74,33 @@ class TestLifespan:
                 assert test_app.state.dispatcher is mock_dispatcher
                 assert test_app.state.vector_store is mock_vector_store
 
+            mock_vector_store.initialize_collection.assert_awaited_once()
             mock_dispatcher.close.assert_awaited_once()
             mock_vector_store.close.assert_awaited_once()
             mock_engine.dispose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_vector_store_initialization_failure_logged(self) -> None:
+        test_app = create_app()
+
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.close = AsyncMock()
+        mock_vector_store = AsyncMock()
+        mock_vector_store.initialize_collection.side_effect = Exception("Connection refused")
+        mock_vector_store.close = AsyncMock()
+        mock_engine = AsyncMock()
+        mock_engine.dispose = AsyncMock()
+
+        with (
+            patch("app.main.ArqTaskDispatcher", return_value=mock_dispatcher),
+            patch("app.main.QdrantVectorStore", return_value=mock_vector_store),
+            patch("app.main.engine", mock_engine),
+        ):
+            async with lifespan(test_app):
+                assert test_app.state.vector_store is mock_vector_store
+
+            mock_vector_store.initialize_collection.assert_awaited_once()
+            mock_vector_store.close.assert_awaited_once()
 
 
 class TestExceptionHandlers:

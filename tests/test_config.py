@@ -108,3 +108,20 @@ def test_dotenv_example_load():
     assert settings.postgres_db == "rag_pipeline"
     assert settings.embedding_model == "bge-m3"
     assert settings.max_batch_ingest_size == 10
+
+
+def test_empty_qdrant_api_key_normalized_to_none(monkeypatch):
+    """Verify that empty or whitespace QDRANT_API_KEY is normalized to None."""
+    from app.core.config import Settings
+
+    monkeypatch.setenv("QDRANT_API_KEY", "")
+    settings = Settings()
+    assert settings.qdrant_api_key is None
+
+    monkeypatch.setenv("QDRANT_API_KEY", "   ")
+    settings_ws = Settings()
+    assert settings_ws.qdrant_api_key is None
+
+    monkeypatch.setenv("QDRANT_API_KEY", "valid-secret-key")
+    settings_valid = Settings()
+    assert settings_valid.qdrant_api_key == "valid-secret-key"

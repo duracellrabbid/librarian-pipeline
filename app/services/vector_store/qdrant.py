@@ -26,7 +26,8 @@ class QdrantVectorStore:
         self.collection_name = collection_name
         self.dimension = dimension
         self.url = url or settings.qdrant_url
-        self.api_key = api_key or settings.qdrant_api_key
+        raw_key = api_key if api_key is not None else settings.qdrant_api_key
+        self.api_key = raw_key.strip() if raw_key and raw_key.strip() else None
         self._client = client
         self._owns_client = client is None
 

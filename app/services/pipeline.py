@@ -141,6 +141,7 @@ class IngestionPipelineService:
 
         texts = [chunk.text for chunk in chunks]
         vectors = await self.embedding_client.embed_batch(texts)
+        await self.vector_store.initialize_collection()
         await self.vector_store.upsert_chunks(
             doc_id=str(document_id),
             chunks=chunks,

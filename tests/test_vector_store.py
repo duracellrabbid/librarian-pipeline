@@ -104,6 +104,17 @@ def test_qdrant_store_init_defaults() -> None:
     assert store.api_key == settings.qdrant_api_key
 
 
+def test_qdrant_store_empty_api_key_normalized_to_none() -> None:
+    """Test that empty or whitespace api_key is normalized to None."""
+    from app.services.vector_store.qdrant import QdrantVectorStore
+
+    store_empty = QdrantVectorStore(api_key="")
+    assert store_empty.api_key is None
+
+    store_ws = QdrantVectorStore(api_key="   ")
+    assert store_ws.api_key is None
+
+
 @pytest.mark.asyncio
 async def test_qdrant_store_lifecycle_and_custom_init() -> None:
     """Test QdrantVectorStore custom options and context manager lifecycle."""

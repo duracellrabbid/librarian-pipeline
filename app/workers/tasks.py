@@ -32,6 +32,14 @@ async def startup(ctx: dict[str, Any]) -> None:
     """
     settings = get_settings()
     ctx["settings"] = settings
+    try:
+        from app.services.vector_store.qdrant import QdrantVectorStore
+
+        vector_store = QdrantVectorStore()
+        await vector_store.initialize_collection()
+        ctx["vector_store"] = vector_store
+    except Exception as exc:
+        logger.warning("Could not initialize Qdrant vector store in worker startup: %s", exc)
     logger.info("ARQ worker started for %s environment", settings.environment)
 
 
@@ -41,6 +49,9 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     Args:
         ctx: Worker context dictionary.
     """
+    vector_store = ctx.get("vector_store")
+    if vector_store is not None and hasattr(vector_store, "close"):
+        await vector_store.close()
     logger.info("ARQ worker shutting down")
 
 
@@ -66,7 +77,8 @@ async def run_ingestion_pipeline(
         try:
             from app.services.pipeline import IngestionPipelineService
 
-            service = IngestionPipelineService()
+            vector_store = ctx.get("vector_store")
+            service = IngestionPipelineService(vector_store=vector_store)
         except (ImportError, AttributeError):
             logger.warning(
                 "IngestionPipelineService not available; skipping pipeline run for job %s",

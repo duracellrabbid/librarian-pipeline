@@ -73,6 +73,8 @@ class Settings(BaseSettings):
             self.qdrant_url = f"http://{self.qdrant_host}:{self.qdrant_port}"
         if not self.ollama_base_url:
             self.ollama_base_url = f"http://{self.ollama_host}:{self.ollama_port}"
+        if self.qdrant_api_key is not None and not self.qdrant_api_key.strip():
+            self.qdrant_api_key = None
 
 
 @lru_cache
