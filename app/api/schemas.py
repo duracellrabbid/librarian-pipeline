@@ -5,11 +5,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-from app.models.job import JobStatus
+from app.models.job import BatchJobStatus
 
 
-class IngestRequest(BaseModel):
-    """Payload for submitting a new document ingestion request."""
+class DocumentIngestItem(BaseModel):
+    """Specification of an individual document source within a batch ingestion request."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -21,30 +21,63 @@ class IngestRequest(BaseModel):
     )
 
 
-class IngestResponse(BaseModel):
-    """Response returned upon successful document ingestion submission."""
+class IngestRequest(BaseModel):
+    """Payload for submitting a batch document ingestion request."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    job_id: UUID = Field(description="Unique identifier of the background ingestion job")
-    doc_id: UUID = Field(description="Unique identifier of the created document")
+    documents: list[DocumentIngestItem] = Field(
+        min_length=1,
+        description="List of document targets to scrape and index",
+    )
+
+
+class IngestResponse(BaseModel):
+    """Response returned upon successful batch document ingestion submission."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    main_job_id: UUID = Field(description="Unique identifier of the batch ingestion job")
     status: str = Field(
-        default=JobStatus.PENDING.value,
-        description="Initial lifecycle status of the ingestion job",
+        default=BatchJobStatus.PENDING.value,
+        description="Initial lifecycle status of the batch ingestion job",
+    )
+    total_submitted: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of documents submitted in the batch",
+    )
+    accepted_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of valid documents accepted for background ingestion",
+    )
+    skipped_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of documents skipped due to duplicates or active state",
     )
     message: str = Field(
-        default="Ingestion job submitted successfully",
+        default="Ingestion batch submitted successfully",
         description="Human-readable confirmation message",
     )
 
 
-class JobStatusResponse(BaseModel):
-    """Response representing the current progress and status of an ingestion job."""
+class ChildJobStatusResponse(BaseModel):
+    """Progress and execution status for an individual document within a batch job."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    job_id: UUID = Field(description="Unique identifier of the ingestion job")
-    status: str = Field(description="Current lifecycle status of the ingestion job")
+    url: str = Field(description="Source URL of the document")
+    doc_id: UUID | None = Field(
+        default=None,
+        description="Unique identifier of the created document",
+    )
+    job_id: UUID | None = Field(
+        default=None,
+        description="Unique identifier of the child ingestion job",
+    )
+    status: str = Field(description="Current lifecycle status of the document ingestion")
     progress_percentage: int = Field(
         default=0,
         ge=0,
@@ -54,6 +87,62 @@ class JobStatusResponse(BaseModel):
     error_message: str | None = Field(
         default=None,
         description="Error description if the job failed, or None",
+    )
+
+
+class SkippedDocumentItem(BaseModel):
+    """Details of a document URL skipped during batch submission."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    url: str = Field(description="Source URL of the skipped document")
+    reason: str = Field(
+        description=(
+            "Reason for skipping, e.g. duplicate_in_request, already_ingested, currently_ingesting"
+        ),
+    )
+
+    existing_doc_id: UUID | None = Field(
+        default=None,
+        description="Document ID of the existing record if already present",
+    )
+
+
+class JobStatusResponse(BaseModel):
+    """Response representing the aggregate progress and per-document breakdown of a batch job."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    main_job_id: UUID = Field(description="Unique identifier of the batch ingestion job")
+    status: str = Field(description="Aggregate lifecycle status of the batch ingestion job")
+    overall_progress_percentage: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Overall aggregate progress percentage between 0 and 100",
+    )
+    total_jobs: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of accepted child jobs tracked under this batch",
+    )
+    completed_jobs: int = Field(
+        default=0,
+        ge=0,
+        description="Number of completed (INDEXED) child jobs",
+    )
+    failed_jobs: int = Field(
+        default=0,
+        ge=0,
+        description="Number of failed child jobs",
+    )
+    jobs: list[ChildJobStatusResponse] = Field(
+        default_factory=list,
+        description="Status breakdown of accepted child jobs",
+    )
+    skipped: list[SkippedDocumentItem] = Field(
+        default_factory=list,
+        description="List of documents skipped during submission and reasons",
     )
 
 

@@ -287,3 +287,314 @@ async def test_reingest_url_after_soft_delete_succeeds(session: AsyncSession):
     assert second_doc.deleted_at is None
     assert second_job.id != first_job.id
     assert second_job.document_id == second_doc.id
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_all_accepted(session: AsyncSession):
+    """Verify create_batch_and_jobs creates batch and accepted jobs for all new URLs."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import BatchJobStatus
+    from app.services.repository import create_batch_and_jobs
+
+    items = [
+        DocumentIngestItem(url="https://example.com/page1", title="Page 1"),
+        DocumentIngestItem(url="https://example.com/page2", title="Page 2"),
+    ]
+
+    batch, accepted, skipped = await create_batch_and_jobs(session, items)
+
+    assert batch.total_count == 2
+    assert batch.accepted_count == 2
+    assert batch.skipped_count == 0
+    assert batch.status == BatchJobStatus.PENDING.value
+    assert len(accepted) == 2
+    assert len(skipped) == 0
+
+    doc1, job1 = accepted[0]
+    assert doc1.source_url == "https://example.com/page1"
+    assert doc1.title == "Page 1"
+    assert job1.batch_id == batch.id
+    assert job1.document_id == doc1.id
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_with_intra_request_duplicates(session: AsyncSession):
+    """Verify create_batch_and_jobs keeps first occurrence and skips subsequent duplicates."""
+
+    from app.api.schemas import DocumentIngestItem
+    from app.services.repository import create_batch_and_jobs
+
+    items = [
+        DocumentIngestItem(url="https://example.com/duplicate", title="First Occurrence"),
+        DocumentIngestItem(url="https://example.com/duplicate", title="Second Occurrence"),
+    ]
+
+    batch, accepted, skipped = await create_batch_and_jobs(session, items)
+
+    assert batch.total_count == 2
+    assert batch.accepted_count == 1
+    assert batch.skipped_count == 1
+    assert len(accepted) == 1
+    assert len(skipped) == 1
+    assert skipped[0].url == "https://example.com/duplicate"
+    assert skipped[0].reason == "duplicate_in_request"
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_skips_already_indexed(session: AsyncSession):
+    """Verify active document with INDEXED status is skipped with already_ingested."""
+    from app.api.schemas import DocumentIngestItem
+    from app.services.repository import (
+        create_batch_and_jobs,
+        create_document_and_job,
+        update_job_status,
+    )
+
+    doc, job = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/indexed-page",
+    )
+    await update_job_status(session=session, job_id=job.id, status=JobStatus.INDEXED)
+
+    items = [DocumentIngestItem(url="https://example.com/indexed-page")]
+    batch, accepted, skipped = await create_batch_and_jobs(session, items)
+
+    assert batch.accepted_count == 0
+    assert batch.skipped_count == 1
+    assert len(accepted) == 0
+    assert len(skipped) == 1
+    assert skipped[0].reason == "already_ingested"
+    assert skipped[0].existing_doc_id == doc.id
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_skips_in_progress(session: AsyncSession):
+    """Verify active document in PENDING or processing state is skipped with currently_ingesting."""
+    from app.api.schemas import DocumentIngestItem
+    from app.services.repository import create_batch_and_jobs, create_document_and_job
+
+    doc, _ = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/ingesting-page",
+    )
+
+    items = [DocumentIngestItem(url="https://example.com/ingesting-page")]
+    batch, accepted, skipped = await create_batch_and_jobs(session, items)
+
+    assert batch.accepted_count == 0
+    assert batch.skipped_count == 1
+    assert len(skipped) == 1
+    assert skipped[0].reason == "currently_ingesting"
+    assert skipped[0].existing_doc_id == doc.id
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_reingests_failed(session: AsyncSession):
+    """Verify active document whose latest job FAILED is accepted for re-ingestion."""
+    from app.api.schemas import DocumentIngestItem
+    from app.services.repository import (
+        create_batch_and_jobs,
+        create_document_and_job,
+        update_job_status,
+    )
+
+    doc, job = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/failed-page",
+    )
+    await update_job_status(session=session, job_id=job.id, status=JobStatus.FAILED)
+
+    items = [DocumentIngestItem(url="https://example.com/failed-page")]
+    batch, accepted, skipped = await create_batch_and_jobs(session, items)
+
+    assert batch.accepted_count == 1
+    assert batch.skipped_count == 0
+    assert len(accepted) == 1
+    new_doc, new_job = accepted[0]
+    assert new_doc.id == doc.id  # reuses existing document
+    assert new_job.id != job.id  # creates new job
+    assert new_job.batch_id == batch.id
+
+
+@pytest.mark.asyncio
+async def test_get_batch_job_status_success(session: AsyncSession):
+    """Verify get_batch_job_status retrieves aggregated counts and child job statuses."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import BatchJobStatus
+    from app.services.repository import (
+        create_batch_and_jobs,
+        get_batch_job_status,
+        update_job_status,
+    )
+
+    items = [
+        DocumentIngestItem(url="https://example.com/p1"),
+        DocumentIngestItem(url="https://example.com/p2"),
+    ]
+    batch, accepted, _ = await create_batch_and_jobs(session, items)
+    job1_id = accepted[0][1].id
+    job2_id = accepted[1][1].id
+
+    # Update job1 to INDEXED and job2 to SCRAPING
+    await update_job_status(session, job1_id, JobStatus.INDEXED, progress_percentage=100)
+    await update_job_status(session, job2_id, JobStatus.SCRAPING, progress_percentage=50)
+
+    status_resp = await get_batch_job_status(session, batch.id)
+
+    assert status_resp.main_job_id == batch.id
+    assert status_resp.status == BatchJobStatus.PROCESSING.value
+    assert status_resp.total_jobs == 2
+    assert status_resp.completed_jobs == 1
+    assert status_resp.failed_jobs == 0
+    assert status_resp.overall_progress_percentage == 75
+    assert len(status_resp.jobs) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_batch_job_status_not_found(session: AsyncSession):
+    """Verify get_batch_job_status raises JobNotFoundError when batch_id does not exist."""
+    from app.services.repository import JobNotFoundError, get_batch_job_status
+
+    missing_id = uuid4()
+    with pytest.raises(JobNotFoundError, match=f"Batch job {missing_id} not found"):
+        await get_batch_job_status(session, missing_id)
+
+
+@pytest.mark.asyncio
+async def test_get_batch_job_status_all_skipped_total_jobs_zero(session: AsyncSession):
+    """Verify get_batch_job_status when all URLs in the batch were skipped."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import BatchJobStatus
+    from app.services.repository import create_batch_and_jobs, get_batch_job_status
+
+    items = [
+        DocumentIngestItem(url="https://example.com/dup"),
+        DocumentIngestItem(url="https://example.com/dup"),
+    ]
+    # First batch accepts one, second batch with same URL will skip all
+    await create_batch_and_jobs(session, [DocumentIngestItem(url="https://example.com/dup")])
+    batch2, _, _ = await create_batch_and_jobs(session, items)
+
+    status_resp = await get_batch_job_status(session, batch2.id)
+    assert status_resp.total_jobs == 0
+    assert status_resp.status == BatchJobStatus.COMPLETED.value
+    assert status_resp.overall_progress_percentage == 100
+
+
+@pytest.mark.asyncio
+async def test_get_batch_job_status_all_completed(session: AsyncSession):
+    """Verify get_batch_job_status transitions to COMPLETED when all child jobs are INDEXED."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import BatchJobStatus
+    from app.services.repository import (
+        create_batch_and_jobs,
+        get_batch_job_status,
+        update_job_status,
+    )
+
+    items = [DocumentIngestItem(url="https://example.com/c1")]
+    batch, accepted, _ = await create_batch_and_jobs(session, items)
+    await update_job_status(session, accepted[0][1].id, JobStatus.INDEXED)
+
+    status_resp = await get_batch_job_status(session, batch.id)
+    assert status_resp.status == BatchJobStatus.COMPLETED.value
+    assert status_resp.completed_jobs == 1
+    assert status_resp.overall_progress_percentage == 100
+
+
+@pytest.mark.asyncio
+async def test_get_batch_job_status_all_failed(session: AsyncSession):
+    """Verify get_batch_job_status transitions to FAILED when all child jobs are FAILED."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import BatchJobStatus
+    from app.services.repository import (
+        create_batch_and_jobs,
+        get_batch_job_status,
+        update_job_status,
+    )
+
+    items = [DocumentIngestItem(url="https://example.com/f1")]
+    batch, accepted, _ = await create_batch_and_jobs(session, items)
+    await update_job_status(session, accepted[0][1].id, JobStatus.FAILED)
+
+    status_resp = await get_batch_job_status(session, batch.id)
+    assert status_resp.status == BatchJobStatus.FAILED.value
+    assert status_resp.failed_jobs == 1
+
+
+@pytest.mark.asyncio
+async def test_get_batch_job_status_partially_failed(session: AsyncSession):
+    """Verify get_batch_job_status transitions to PARTIALLY_FAILED when jobs partially fail."""
+
+    from app.api.schemas import DocumentIngestItem
+    from app.models import BatchJobStatus
+    from app.services.repository import (
+        create_batch_and_jobs,
+        get_batch_job_status,
+        update_job_status,
+    )
+
+    items = [
+        DocumentIngestItem(url="https://example.com/pf1"),
+        DocumentIngestItem(url="https://example.com/pf2"),
+    ]
+    batch, accepted, _ = await create_batch_and_jobs(session, items)
+    await update_job_status(session, accepted[0][1].id, JobStatus.INDEXED)
+    await update_job_status(session, accepted[1][1].id, JobStatus.FAILED)
+
+    status_resp = await get_batch_job_status(session, batch.id)
+    assert status_resp.status == BatchJobStatus.PARTIALLY_FAILED.value
+    assert status_resp.completed_jobs == 1
+    assert status_resp.failed_jobs == 1
+
+
+@pytest.mark.asyncio
+async def test_get_batch_job_status_pending(session: AsyncSession):
+    """Verify get_batch_job_status remains PENDING when all child jobs are PENDING."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import BatchJobStatus
+    from app.services.repository import create_batch_and_jobs, get_batch_job_status
+
+    items = [DocumentIngestItem(url="https://example.com/pend1")]
+    batch, _, _ = await create_batch_and_jobs(session, items)
+
+    status_resp = await get_batch_job_status(session, batch.id)
+    assert status_resp.status == BatchJobStatus.PENDING.value
+    assert status_resp.overall_progress_percentage == 0
+
+
+@pytest.mark.asyncio
+async def test_update_document_metadata_success(session: AsyncSession):
+    """Verify update_document_metadata updates title, chunk_count, and content_hash."""
+    from app.services.repository import create_document_and_job, update_document_metadata
+
+    doc, _ = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/metadata-test",
+    )
+
+    updated = await update_document_metadata(
+        session=session,
+        document_id=doc.id,
+        title="Updated Title",
+        chunk_count=5,
+        content_hash="hash123",
+    )
+
+    assert updated.title == "Updated Title"
+    assert updated.chunk_count == 5
+    assert updated.content_hash == "hash123"
+
+
+@pytest.mark.asyncio
+async def test_update_document_metadata_not_found(session: AsyncSession):
+    """Verify update_document_metadata raises DocumentNotFoundError when document does not exist."""
+    from app.services.repository import DocumentNotFoundError, update_document_metadata
+
+    missing_id = uuid4()
+    with pytest.raises(DocumentNotFoundError, match=f"Document {missing_id} not found"):
+        await update_document_metadata(session=session, document_id=missing_id, title="Test")

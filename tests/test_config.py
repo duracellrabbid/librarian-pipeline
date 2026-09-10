@@ -15,6 +15,31 @@ def test_default_settings():
     assert settings.qdrant_port == 6333
     assert settings.ollama_base_url == "http://localhost:11434"
     assert settings.embedding_model == "bge-m3"
+    assert settings.max_batch_ingest_size == 10
+
+
+def test_derived_connection_urls():
+    """Verify that connection URLs are derived when not explicitly provided."""
+    from app.core.config import Settings
+
+    settings = Settings(
+        _env_file=None,
+        database_url=None,
+        sync_database_url=None,
+        redis_url=None,
+        qdrant_url=None,
+        ollama_base_url=None,
+    )
+    assert (
+        settings.database_url
+        == "postgresql+asyncpg://postgres:postgres@localhost:5432/rag_pipeline"
+    )
+    assert (
+        settings.sync_database_url == "postgresql://postgres:postgres@localhost:5432/rag_pipeline"
+    )
+    assert settings.redis_url == "redis://localhost:6379/0"
+    assert settings.qdrant_url == "http://localhost:6333"
+    assert settings.ollama_base_url == "http://localhost:11434"
 
 
 def test_env_override(monkeypatch):
@@ -27,6 +52,7 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("REDIS_PORT", "6380")
     monkeypatch.setenv("EMBEDDING_MODEL", "custom-embed-v1")
     monkeypatch.setenv("QDRANT_URL", "http://custom-qdrant:6333")
+    monkeypatch.setenv("MAX_BATCH_INGEST_SIZE", "25")
 
     settings = Settings()
     assert settings.app_name == "custom-pipeline"
@@ -35,6 +61,7 @@ def test_env_override(monkeypatch):
     assert settings.redis_port == 6380
     assert settings.embedding_model == "custom-embed-v1"
     assert settings.qdrant_url == "http://custom-qdrant:6333"
+    assert settings.max_batch_ingest_size == 25
 
 
 def test_invalid_port_validation(monkeypatch):
@@ -42,6 +69,19 @@ def test_invalid_port_validation(monkeypatch):
     from app.core.config import Settings
 
     monkeypatch.setenv("POSTGRES_PORT", "not-a-number")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_invalid_batch_size_validation(monkeypatch):
+    """Verify validation error when max_batch_ingest_size is invalid or non-positive."""
+    from app.core.config import Settings
+
+    monkeypatch.setenv("MAX_BATCH_INGEST_SIZE", "0")
+    with pytest.raises(ValidationError):
+        Settings()
+
+    monkeypatch.setenv("MAX_BATCH_INGEST_SIZE", "not-a-number")
     with pytest.raises(ValidationError):
         Settings()
 
@@ -67,3 +107,4 @@ def test_dotenv_example_load():
     settings = Settings(**clean_values)
     assert settings.postgres_db == "rag_pipeline"
     assert settings.embedding_model == "bge-m3"
+    assert settings.max_batch_ingest_size == 10

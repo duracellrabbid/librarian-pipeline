@@ -1,8 +1,5 @@
-# document-ingestion-api Specification
+## MODIFIED Requirements
 
-## Purpose
-Defines the REST API endpoints and behavioral contracts for document ingestion submission, progress monitoring, existence checks, and soft deletion with vector purging.
-## Requirements
 ### Requirement: Document Ingestion Submission
 The system SHALL provide a `POST /documents/ingest` endpoint accepting a batch ingestion request payload containing an array of documents (each with a valid `url`, optional `title`, and optional `metadata`), subject to a configurable maximum batch size limit (`MAX_BATCH_INGEST_SIZE`).
 
@@ -40,26 +37,3 @@ The system SHALL provide a `GET /documents/status/{main_job_id}` endpoint return
 #### Scenario: Non-existent batch job status inquiry
 - **WHEN** a client queries a `main_job_id` that does not exist in the database
 - **THEN** the system returns HTTP 404 Not Found.
-
-### Requirement: Document Existence Verification
-The system SHALL provide a `GET /documents/check` endpoint accepting a `url` query parameter to check whether a URL is actively ingested.
-
-#### Scenario: Active URL check
-- **WHEN** a client queries `GET /documents/check?url={url}` for an actively ingested URL
-- **THEN** the system returns HTTP 200 OK with `exists: true`, `doc_id`, and latest job `status`.
-
-#### Scenario: Non-ingested or soft-deleted URL check
-- **WHEN** a client queries `GET /documents/check?url={url}` for a URL that does not exist or has been soft-deleted
-- **THEN** the system returns HTTP 200 OK with `exists: false`, `doc_id: null`, and `status: null`.
-
-### Requirement: Document Soft Deletion and Vector Purging
-The system SHALL provide a `DELETE /documents/{doc_id}` endpoint to purge vector points from Qdrant and soft-delete the document in PostgreSQL.
-
-#### Scenario: Successful document deletion
-- **WHEN** a client sends `DELETE /documents/{doc_id}` for an active document
-- **THEN** the system deletes all vector points in Qdrant matching `doc_id`, marks the `Document` record soft-deleted (`deleted_at = NOW()`), and returns HTTP 200 OK.
-
-#### Scenario: Deletion of non-existent or already deleted document
-- **WHEN** a client sends `DELETE /documents/{doc_id}` for a document that does not exist or is already soft-deleted
-- **THEN** the system returns HTTP 404 Not Found.
-

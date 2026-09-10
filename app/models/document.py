@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Index, text
+from sqlalchemy import DateTime, Index, text
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -36,9 +36,22 @@ class Document(SQLModel, table=True):
     content_hash: str | None = Field(default=None, description="Content hash for deduplication")
     title: str | None = Field(default=None, description="Extracted or provided title")
     chunk_count: int = Field(default=0, ge=0, description="Total chunks indexed for document")
-    created_at: datetime = Field(default_factory=utc_now, nullable=False)
-    updated_at: datetime = Field(default_factory=utc_now, nullable=False)
-    deleted_at: datetime | None = Field(default=None, index=True, nullable=True)
+    created_at: datetime = Field(
+        default_factory=utc_now,
+        sa_type=DateTime(timezone=True),
+        nullable=False,
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_type=DateTime(timezone=True),
+        nullable=False,
+    )
+    deleted_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+        index=True,
+        nullable=True,
+    )
 
     jobs: list["IngestionJob"] = Relationship(
         back_populates="document",

@@ -1,9 +1,10 @@
 """REST API endpoints for document ingestion, status tracking, checking, and deletion."""
 
+import asyncio
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -15,13 +16,14 @@ from app.api.schemas import (
     IngestResponse,
     JobStatusResponse,
 )
+from app.core.config import Settings, get_settings
 from app.core.dispatcher import TaskDispatcher
 from app.models import Document, IngestionJob
 from app.services.repository import (
     DocumentNotFoundError,
-    JobNotFoundError,
     check_active_url,
-    create_document_and_job,
+    create_batch_and_jobs,
+    get_batch_job_status,
     soft_delete_document,
 )
 from app.services.vector_store.qdrant import QdrantVectorStore
@@ -33,61 +35,65 @@ router = APIRouter(prefix="/documents", tags=["documents"])
     "/ingest",
     response_model=IngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Submit URL for asynchronous ingestion",
+    summary="Submit batch of URLs for asynchronous ingestion",
 )
 async def ingest_document(
     payload: IngestRequest,
     session: Annotated[AsyncSession, Depends(get_db)],
     dispatcher: Annotated[TaskDispatcher, Depends(get_dispatcher)],
+    settings: Annotated[Settings, Depends(get_settings)] = None,  # type: ignore[assignment]
 ) -> IngestResponse:
-    """Submit a URL for scraping, chunking, embedding, and vector storage."""
-    url_str = str(payload.url)
+    """Submit a batch of URLs for scraping, chunking, embedding, and vector storage."""
+    app_settings = settings or get_settings()
+    max_limit = app_settings.max_batch_ingest_size
+    if len(payload.documents) > max_limit:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Batch size {len(payload.documents)} exceeds maximum allowed limit of {max_limit}"
+            ),
+        )
 
-    document, job = await create_document_and_job(
+    batch, accepted_pairs, _ = await create_batch_and_jobs(
         session=session,
+        items=payload.documents,
         source_type="url",
-        source_url=url_str,
-        title=payload.title,
     )
 
-    await dispatcher.enqueue_ingestion_job(
-        job_id=job.id,
-        document_id=document.id,
-        url=url_str,
-    )
+    if accepted_pairs:
+        await asyncio.gather(
+            *(
+                dispatcher.enqueue_ingestion_job(
+                    job_id=job.id,
+                    document_id=doc.id,
+                    url=doc.source_url,
+                )
+                for doc, job in accepted_pairs
+            )
+        )
 
     return IngestResponse(
-        job_id=job.id,
-        doc_id=document.id,
-        status=job.status,
-        message="Ingestion job submitted successfully",
+        main_job_id=batch.id,
+        status=batch.status,
+        total_submitted=batch.total_count,
+        accepted_count=batch.accepted_count,
+        skipped_count=batch.skipped_count,
+        message="Ingestion batch submitted successfully",
     )
 
 
 @router.get(
-    "/status/{job_id}",
+    "/status/{main_job_id}",
     response_model=JobStatusResponse,
     status_code=status.HTTP_200_OK,
-    summary="Get ingestion job status and progress",
+    summary="Get batch ingestion job status and progress",
 )
 async def get_job_status(
-    job_id: UUID,
+    main_job_id: UUID,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> JobStatusResponse:
-    """Retrieve real-time status and progress percentage for an ingestion job."""
-    statement = select(IngestionJob).where(IngestionJob.id == job_id)
-    result = await session.execute(statement)
-    job = result.scalars().first()
-
-    if job is None:
-        raise JobNotFoundError(f"Ingestion job {job_id} not found")
-
-    return JobStatusResponse(
-        job_id=job.id,
-        status=job.status,
-        progress_percentage=job.progress_percentage,
-        error_message=job.error_message,
-    )
+    """Retrieve aggregate status and progress for a batch ingestion job."""
+    return await get_batch_job_status(session=session, batch_id=main_job_id)
 
 
 @router.get(

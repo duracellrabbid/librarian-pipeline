@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", description="Runtime environment")
     log_level: str = Field(default="INFO", description="Logging level")
     api_v1_prefix: str = Field(default="/api/v1", description="API v1 prefix")
+    max_batch_ingest_size: int = Field(
+        default=10,
+        ge=1,
+        description="Maximum number of documents allowed per batch ingestion request",
+    )
 
     # PostgreSQL configuration
     postgres_user: str = Field(default="postgres", description="PostgreSQL user")

@@ -84,35 +84,102 @@ class TestIngestEndpoint:
         mock_dispatcher: AsyncMock,
     ) -> None:
         payload = {
-            "url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
-            "title": "AI Wiki",
+            "documents": [
+                {
+                    "url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
+                    "title": "AI Wiki",
+                }
+            ]
         }
         response = await client.post("/documents/ingest", json=payload)
         assert response.status_code == 202
         data = response.json()
         assert data["status"] == JobStatus.PENDING.value
-        assert "job_id" in data
-        assert "doc_id" in data
+        assert "main_job_id" in data
+        assert data["total_submitted"] == 1
+        assert data["accepted_count"] == 1
+        assert data["skipped_count"] == 0
         mock_dispatcher.enqueue_ingestion_job.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_duplicate_active_url_rejection(
+    async def test_batch_size_cap_exceeded_returns_422(
+        self,
+        client: AsyncClient,
+    ) -> None:
+        payload = {"documents": [{"url": f"https://example.com/page{i}"} for i in range(11)]}
+        response = await client.post("/documents/ingest", json=payload)
+        assert response.status_code == 422
+        detail = response.json()["detail"].lower()
+        assert "exceeds" in detail
+
+    @pytest.mark.asyncio
+    async def test_intra_request_duplicates(
+        self,
+        client: AsyncClient,
+        mock_dispatcher: AsyncMock,
+    ) -> None:
+        payload = {
+            "documents": [
+                {"url": "https://example.com/dup", "title": "First"},
+                {"url": "https://example.com/dup", "title": "Second"},
+            ]
+        }
+        response = await client.post("/documents/ingest", json=payload)
+        assert response.status_code == 202
+        data = response.json()
+        assert data["total_submitted"] == 2
+        assert data["accepted_count"] == 1
+        assert data["skipped_count"] == 1
+        mock_dispatcher.enqueue_ingestion_job.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_active_indexed_and_in_progress_urls(
         self,
         client: AsyncClient,
         async_session: AsyncSession,
+        mock_dispatcher: AsyncMock,
     ) -> None:
-        url = "https://en.wikipedia.org/wiki/Duplicate_Test"
+        url = "https://example.com/already-active"
         await create_document_and_job(async_session, source_type="url", source_url=url)
 
-        payload = {"url": url}
+        payload = {"documents": [{"url": url}]}
         response = await client.post("/documents/ingest", json=payload)
-        assert response.status_code == 409
-        detail = response.json()["detail"].lower()
-        assert "already" in detail
+        assert response.status_code == 202
+        data = response.json()
+        assert data["accepted_count"] == 0
+        assert data["skipped_count"] == 1
+        mock_dispatcher.enqueue_ingestion_job.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reingests_failed_url(
+        self,
+        client: AsyncClient,
+        async_session: AsyncSession,
+        mock_dispatcher: AsyncMock,
+    ) -> None:
+        from app.services.repository import update_job_status
+
+        url = "https://example.com/failed-reingest"
+        _, job = await create_document_and_job(async_session, source_type="url", source_url=url)
+        await update_job_status(async_session, job_id=job.id, status=JobStatus.FAILED)
+
+        payload = {"documents": [{"url": url}]}
+        response = await client.post("/documents/ingest", json=payload)
+        assert response.status_code == 202
+        data = response.json()
+        assert data["accepted_count"] == 1
+        assert data["skipped_count"] == 0
+        mock_dispatcher.enqueue_ingestion_job.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_invalid_url_returns_422(self, client: AsyncClient) -> None:
-        payload = {"url": "not-a-valid-url"}
+        payload = {"documents": [{"url": "not-a-valid-url"}]}
+        response = await client.post("/documents/ingest", json=payload)
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_empty_documents_returns_422(self, client: AsyncClient) -> None:
+        payload = {"documents": []}
         response = await client.post("/documents/ingest", json=payload)
         assert response.status_code == 422
 
@@ -123,13 +190,13 @@ class TestIngestEndpoint:
         mock_dispatcher: AsyncMock,
     ) -> None:
         mock_dispatcher.enqueue_ingestion_job.side_effect = DispatcherError("Queue failure")
-        payload = {"url": "https://en.wikipedia.org/wiki/Failure_Test"}
+        payload = {"documents": [{"url": "https://en.wikipedia.org/wiki/Failure_Test"}]}
         response = await client.post("/documents/ingest", json=payload)
         assert response.status_code == 500
 
 
 class TestStatusEndpoint:
-    """Tests for GET /documents/status/{job_id} endpoint."""
+    """Tests for GET /documents/status/{main_job_id} endpoint."""
 
     @pytest.mark.asyncio
     async def test_status_existing_job(
@@ -137,17 +204,21 @@ class TestStatusEndpoint:
         client: AsyncClient,
         async_session: AsyncSession,
     ) -> None:
-        _, job = await create_document_and_job(
+        from app.api.schemas import DocumentIngestItem
+        from app.models import BatchJobStatus
+        from app.services.repository import create_batch_and_jobs
+
+        batch, _, _ = await create_batch_and_jobs(
             async_session,
-            source_type="url",
-            source_url="https://example.com/status-test",
+            [DocumentIngestItem(url="https://example.com/status-test")],
         )
-        response = await client.get(f"/documents/status/{job.id}")
+        response = await client.get(f"/documents/status/{batch.id}")
         assert response.status_code == 200
         data = response.json()
-        assert data["job_id"] == str(job.id)
-        assert data["status"] == JobStatus.PENDING.value
-        assert data["progress_percentage"] == 0
+        assert data["main_job_id"] == str(batch.id)
+        assert data["status"] == BatchJobStatus.PENDING.value
+        assert data["overall_progress_percentage"] == 0
+        assert len(data["jobs"]) == 1
 
     @pytest.mark.asyncio
     async def test_status_non_existent_job_returns_404(
@@ -339,10 +410,14 @@ class TestDirectHandlerInvocations:
     ) -> None:
         from app.api.schemas import IngestRequest
         from app.api.v1.endpoints.documents import ingest_document
+        from app.models import BatchJobStatus
 
-        req = IngestRequest(url="https://example.com/direct-ingest", title="Direct Title")
+        req = IngestRequest(
+            documents=[{"url": "https://example.com/direct-ingest", "title": "Direct Title"}]
+        )
         resp = await ingest_document(req, async_session, mock_dispatcher)
-        assert resp.status == JobStatus.PENDING.value
+        assert resp.status == BatchJobStatus.PENDING.value
+        assert resp.accepted_count == 1
         mock_dispatcher.enqueue_ingestion_job.assert_awaited()
 
     @pytest.mark.asyncio
@@ -350,16 +425,16 @@ class TestDirectHandlerInvocations:
         self,
         async_session: AsyncSession,
     ) -> None:
+        from app.api.schemas import DocumentIngestItem
         from app.api.v1.endpoints.documents import get_job_status
-        from app.services.repository import JobNotFoundError
+        from app.services.repository import JobNotFoundError, create_batch_and_jobs
 
-        _, job = await create_document_and_job(
+        batch, _, _ = await create_batch_and_jobs(
             async_session,
-            source_type="url",
-            source_url="https://example.com/direct-status",
+            [DocumentIngestItem(url="https://example.com/direct-status")],
         )
-        resp = await get_job_status(job.id, async_session)
-        assert resp.job_id == job.id
+        resp = await get_job_status(batch.id, async_session)
+        assert resp.main_job_id == batch.id
 
         with pytest.raises(JobNotFoundError):
             await get_job_status(uuid4(), async_session)

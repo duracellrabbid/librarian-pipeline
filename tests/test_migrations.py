@@ -39,6 +39,7 @@ def test_alembic_upgrade_and_downgrade_cycle(alembic_cfg: Config, temp_db_path: 
 
         assert "documents" in tables
         assert "ingestion_jobs" in tables
+        assert "batch_ingestion_jobs" in tables
 
         # Verify documents columns
         doc_cols = {col["name"]: col for col in inspector.get_columns("documents")}
@@ -50,18 +51,30 @@ def test_alembic_upgrade_and_downgrade_cycle(alembic_cfg: Config, temp_db_path: 
         assert "updated_at" in doc_cols
         assert "deleted_at" in doc_cols
 
+        # Verify batch_ingestion_jobs columns
+        batch_cols = {col["name"]: col for col in inspector.get_columns("batch_ingestion_jobs")}
+        assert "id" in batch_cols
+        assert "status" in batch_cols
+        assert "total_count" in batch_cols
+        assert "accepted_count" in batch_cols
+        assert "skipped_count" in batch_cols
+        assert "skipped_details" in batch_cols
+        assert "created_at" in batch_cols
+        assert "finished_at" in batch_cols
+
         # Verify ingestion_jobs columns & foreign keys
         job_cols = {col["name"]: col for col in inspector.get_columns("ingestion_jobs")}
         assert "id" in job_cols
+        assert "batch_id" in job_cols
         assert "document_id" in job_cols
         assert "status" in job_cols
         assert "progress_percentage" in job_cols
         assert "finished_at" in job_cols
 
         fks = inspector.get_foreign_keys("ingestion_jobs")
-        assert len(fks) >= 1
-        assert fks[0]["referred_table"] == "documents"
-        assert fks[0]["referred_columns"] == ["id"]
+        referred_tables = {fk["referred_table"] for fk in fks}
+        assert "documents" in referred_tables
+        assert "batch_ingestion_jobs" in referred_tables
 
         # Verify partial unique index
         doc_indices = inspector.get_indexes("documents")
@@ -85,6 +98,7 @@ def test_alembic_upgrade_and_downgrade_cycle(alembic_cfg: Config, temp_db_path: 
         remaining_tables = inspector.get_table_names()
         assert "documents" not in remaining_tables
         assert "ingestion_jobs" not in remaining_tables
+        assert "batch_ingestion_jobs" not in remaining_tables
     finally:
         sync_engine.dispose()
 

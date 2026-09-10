@@ -34,7 +34,7 @@ services:
       start_period: 5s
 
   qdrant:
-    image: qdrant/qdrant:v1.9.0
+    image: qdrant/qdrant:latest
     container_name: rag_qdrant
     restart: unless-stopped
     ports:

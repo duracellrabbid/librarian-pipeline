@@ -195,3 +195,192 @@ async def test_database_persistence_and_relationships():
         assert stored_job.progress_percentage == 0
 
     await test_engine.dispose()
+
+
+def test_batch_job_status_enum_values():
+    """Verify BatchJobStatus enum defines expected lifecycle stages."""
+    from app.models.job import BatchJobStatus
+
+    assert BatchJobStatus.PENDING.value == "PENDING"
+    assert BatchJobStatus.PROCESSING.value == "PROCESSING"
+    assert BatchJobStatus.COMPLETED.value == "COMPLETED"
+    assert BatchJobStatus.PARTIALLY_FAILED.value == "PARTIALLY_FAILED"
+    assert BatchJobStatus.FAILED.value == "FAILED"
+
+
+def test_batch_ingestion_job_instantiation_defaults():
+    """Verify BatchIngestionJob initializes with default fields and empty lists."""
+    from app.models import BatchIngestionJob, BatchJobStatus
+
+    batch = BatchIngestionJob()
+
+    assert isinstance(batch.id, UUID)
+    assert batch.status == BatchJobStatus.PENDING.value
+    assert batch.total_count == 0
+    assert batch.accepted_count == 0
+    assert batch.skipped_count == 0
+    assert batch.skipped_details == []
+    assert isinstance(batch.created_at, datetime)
+    assert batch.finished_at is None
+
+
+def test_batch_ingestion_job_explicit_fields():
+    """Verify BatchIngestionJob stores explicit counts, status, and skipped details."""
+    from app.models import BatchIngestionJob, BatchJobStatus
+
+    fixed_id = uuid4()
+    finished = datetime.now()
+    skipped = [{"url": "https://example.com/skipped", "reason": "already_ingested"}]
+
+    batch = BatchIngestionJob(
+        id=fixed_id,
+        status=BatchJobStatus.COMPLETED.value,
+        total_count=5,
+        accepted_count=4,
+        skipped_count=1,
+        skipped_details=skipped,
+        finished_at=finished,
+    )
+
+    assert batch.id == fixed_id
+    assert batch.status == "COMPLETED"
+    assert batch.total_count == 5
+    assert batch.accepted_count == 4
+    assert batch.skipped_count == 1
+    assert batch.skipped_details == skipped
+    assert batch.finished_at == finished
+
+
+def test_ingestion_job_with_batch_id():
+    """Verify IngestionJob accepts an optional batch_id."""
+    from app.models import IngestionJob
+
+    doc_id = uuid4()
+    batch_id = uuid4()
+    job = IngestionJob(document_id=doc_id, batch_id=batch_id)
+
+    assert job.batch_id == batch_id
+
+
+def test_batch_and_job_relationship():
+    """Verify relationship between BatchIngestionJob and IngestionJob in memory."""
+    from app.models import BatchIngestionJob, IngestionJob
+
+    batch = BatchIngestionJob()
+    doc_id = uuid4()
+    job = IngestionJob(document_id=doc_id, batch=batch)
+
+    assert job.batch is batch
+
+
+@pytest.mark.asyncio
+async def test_batch_and_jobs_database_persistence():
+    """Verify BatchIngestionJob and child IngestionJob persistence with relational integrity."""
+    from app.models import BatchIngestionJob, BatchJobStatus, Document, IngestionJob
+
+    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with test_engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    test_session_factory = async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    batch_id = uuid4()
+    async with test_session_factory() as session:
+        batch = BatchIngestionJob(
+            id=batch_id,
+            status=BatchJobStatus.PROCESSING.value,
+            total_count=2,
+            accepted_count=2,
+            skipped_count=0,
+            skipped_details=[],
+        )
+        session.add(batch)
+
+        doc1 = Document(source_type="url", source_url="https://example.com/doc1")
+        doc2 = Document(source_type="url", source_url="https://example.com/doc2")
+        session.add_all([doc1, doc2])
+        await session.flush()
+
+        job1 = IngestionJob(document_id=doc1.id, batch_id=batch.id)
+        job2 = IngestionJob(document_id=doc2.id, batch_id=batch.id)
+        session.add_all([job1, job2])
+        await session.commit()
+
+    async with test_session_factory() as session:
+        query = select(BatchIngestionJob).where(BatchIngestionJob.id == batch_id)
+        result = await session.execute(query)
+        stored_batch = result.scalar_one()
+        assert stored_batch.total_count == 2
+        assert stored_batch.status == BatchJobStatus.PROCESSING.value
+
+        jobs_query = select(IngestionJob).where(IngestionJob.batch_id == batch_id)
+        jobs_result = await session.execute(jobs_query)
+        stored_jobs = jobs_result.scalars().all()
+        assert len(stored_jobs) == 2
+
+    await test_engine.dispose()
+
+
+def test_datetime_columns_have_timezone_aware_types():
+    """Verify that all datetime columns are configured with timezone=True for asyncpg."""
+    from app.models import BatchIngestionJob, Document, IngestionJob
+
+    assert Document.__table__.c.created_at.type.timezone is True
+    assert Document.__table__.c.updated_at.type.timezone is True
+    assert Document.__table__.c.deleted_at.type.timezone is True
+
+    assert IngestionJob.__table__.c.created_at.type.timezone is True
+    assert IngestionJob.__table__.c.finished_at.type.timezone is True
+
+    assert BatchIngestionJob.__table__.c.created_at.type.timezone is True
+    assert BatchIngestionJob.__table__.c.finished_at.type.timezone is True
+
+
+@pytest.mark.asyncio
+async def test_postgres_datetime_persistence_if_available():
+    """Verify entity persistence with UTC datetimes in PostgreSQL when reachable."""
+    from app.core.config import settings
+    from scripts.check_env import check_tcp_port
+
+    if not check_tcp_port(settings.postgres_host, settings.postgres_port):
+        pytest.skip(f"PostgreSQL unreachable at {settings.postgres_host}:{settings.postgres_port}")
+
+    from app.models import BatchIngestionJob, BatchJobStatus, Document, IngestionJob, JobStatus
+
+    engine = create_async_engine(settings.database_url, echo=False)
+    session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with session_factory() as session:
+        batch = BatchIngestionJob(
+            id=uuid4(),
+            status=BatchJobStatus.PENDING.value,
+            total_count=1,
+            accepted_count=1,
+            skipped_count=0,
+            skipped_details=[],
+        )
+        session.add(batch)
+
+        doc = Document(
+            source_type="url",
+            source_url=f"https://example.com/test-pg-{uuid4()}",
+        )
+        session.add(doc)
+        await session.flush()
+
+        job = IngestionJob(
+            document_id=doc.id,
+            batch_id=batch.id,
+            status=JobStatus.PENDING.value,
+        )
+        session.add(job)
+        await session.flush()
+
+        # Clean up within transaction rollback
+        await session.rollback()
+
+    await engine.dispose()

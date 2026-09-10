@@ -57,11 +57,23 @@ rag-ingestion-pipeline/
 
 - **`Document`**: Represents registered ingestion targets with audit fields and non-destructive soft deletes.
   - Enforces a PostgreSQL conditional unique index `uq_documents_active_source_url` on `source_url WHERE deleted_at IS NULL`, preventing active duplicates while permitting re-ingestion after soft deletion.
-- **`IngestionJob`**: Represents background ingestion jobs associated with a document via foreign key cascade.
+- **`BatchIngestionJob`**: Represents a batch submission request tracking aggregate batch status, total/accepted/skipped document counts, and skipped document details.
+- **`IngestionJob`**: Represents individual background ingestion jobs associated with a document and grouped under a `BatchIngestionJob`.
 
 ```mermaid
 erDiagram
+    BatchIngestionJob ||--o{ IngestionJob : "groups"
     Document ||--o{ IngestionJob : "tracks execution"
+    BatchIngestionJob {
+        uuid id PK
+        string status "Indexed"
+        int total_count
+        int accepted_count
+        int skipped_count
+        json skipped_details
+        datetime created_at
+        datetime finished_at
+    }
     Document {
         uuid id PK
         string source_type
@@ -75,6 +87,7 @@ erDiagram
     }
     IngestionJob {
         uuid id PK
+        uuid batch_id FK "Nullable"
         uuid document_id FK
         string status "Indexed"
         string error_message
@@ -83,6 +96,7 @@ erDiagram
         datetime finished_at
     }
 ```
+
 
 ### Job State Machine Lifecycle
 
@@ -103,6 +117,8 @@ stateDiagram-v2
 ### Repository Access Functions (`app.services.repository`)
 
 - `check_active_url(session, url)`: Lookup active non-deleted document by URL.
+- `create_batch_and_jobs(session, items)`: Atomically inspects document statuses, deduplicates URLs, records skipped items, and creates `BatchIngestionJob` along with child `Document` and `IngestionJob` records.
+- `get_batch_job_status(session, batch_id)`: Computes aggregate batch lifecycle state and progress percentage, returning all child job statuses and skipped reasons.
 - `create_document_and_job(session, source_type, source_url, title)`: Registers a document and creates its initial `PENDING` job, raising `DuplicateActiveURLError` on collision.
 - `update_job_status(session, job_id, status, progress_percentage, error_message)`: Transitions job status, tracks progress, and sets `finished_at` UTC timestamp upon reaching terminal states (`INDEXED` / `FAILED`).
 - `soft_delete_document(session, doc_id)`: Marks `deleted_at` and `updated_at`, releasing URL deduplication constraints.
@@ -373,59 +389,100 @@ uvicorn app.main.py:app --host 0.0.0.0 --port 8000 --reload
 
 All endpoints are available at the root path (e.g. `/documents/...`) and under the versioned prefix (`/api/v1/documents/...`).
 
-#### 1. Submit Ingestion (`POST /documents/ingest`)
+#### 1. Submit Batch Ingestion (`POST /documents/ingest`)
 
-Submits a web URL for asynchronous scraping, chunking, embedding, and vector indexing.
+Submits an array of web URLs for asynchronous scraping, chunking, embedding, and vector indexing under a single parent batch job.
 
 - **Request Body**:
   ```json
   {
-    "url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
-    "title": "Artificial Intelligence",
-    "metadata": { "source": "wikipedia" }
+    "documents": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
+        "title": "Artificial Intelligence",
+        "metadata": { "source": "wikipedia" }
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Machine_learning",
+        "title": "Machine Learning"
+      }
+    ]
   }
   ```
 - **Responses**:
-  - `202 Accepted`: Job successfully enqueued.
+  - `202 Accepted`: Batch registered and accepted jobs enqueued.
     ```json
     {
-      "job_id": "7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a",
-      "doc_id": "0d635fc2-d1d4-4cf5-94cf-6c0756778f28",
+      "main_job_id": "7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a",
       "status": "PENDING",
-      "message": "Ingestion job submitted successfully"
+      "total_submitted": 2,
+      "accepted_count": 2,
+      "skipped_count": 0,
+      "message": "Ingestion batch submitted successfully"
     }
     ```
-  - `409 Conflict`: URL is already actively ingested.
+  - `422 Unprocessable Entity`: Batch exceeds `MAX_BATCH_INGEST_SIZE` (default: 10) or contains invalid URL schemes.
     ```json
     {
-      "detail": "Active document already exists for URL: https://en.wikipedia.org/wiki/Artificial_intelligence"
+      "detail": "Batch size 12 exceeds maximum allowed limit of 10"
     }
     ```
-  - `422 Unprocessable Entity`: Malformed payload or invalid HTTP/HTTPS URL scheme.
+- **Deduplication & Pre-flight Skipping**:
+  - **Intra-batch duplicates**: First occurrence is accepted; subsequent duplicates within the same batch are marked `duplicate_in_request`.
+  - **Active indexed documents**: URLs already `INDEXED` are skipped with reason `already_ingested`.
+  - **Active in-progress documents**: URLs currently `PENDING`, `SCRAPING`, `CHUNKING`, or `EMBEDDING` are skipped with reason `currently_ingesting`.
+  - **Failed documents**: URLs whose previous job resulted in `FAILED` are automatically accepted for re-ingestion.
 - **Example `curl`**:
   ```bash
   curl -X POST "http://localhost:8000/documents/ingest" \
     -H "Content-Type: application/json" \
-    -d '{"url": "https://en.wikipedia.org/wiki/Artificial_intelligence", "title": "AI"}'
+    -d '{"documents": [{"url": "https://en.wikipedia.org/wiki/Artificial_intelligence", "title": "AI"}]}'
   ```
 
-#### 2. Get Job Status (`GET /documents/status/{job_id}`)
+#### 2. Get Batch Job Status (`GET /documents/status/{main_job_id}`)
 
-Retrieves real-time execution status and progress percentage for a background ingestion job.
+Retrieves aggregate progress percentage, overall lifecycle status, individual document progress, and skipped details for a batch ingestion job.
 
 - **Path Parameters**:
-  - `job_id` (UUID): Unique identifier of the ingestion job.
+  - `main_job_id` (UUID): Unique identifier of the batch ingestion job.
 - **Responses**:
   - `200 OK`:
     ```json
     {
-      "job_id": "7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a",
-      "status": "INDEXED",
-      "progress_percentage": 100,
-      "error_message": null
+      "main_job_id": "7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a",
+      "status": "PROCESSING",
+      "overall_progress_percentage": 50,
+      "total_jobs": 2,
+      "completed_jobs": 1,
+      "failed_jobs": 0,
+      "jobs": [
+        {
+          "url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
+          "doc_id": "0d635fc2-d1d4-4cf5-94cf-6c0756778f28",
+          "job_id": "9a38f711-470b-426b-8d26-7c933fa1297e",
+          "status": "INDEXED",
+          "progress_percentage": 100,
+          "error_message": null
+        },
+        {
+          "url": "https://en.wikipedia.org/wiki/Machine_learning",
+          "doc_id": "1c728e93-e2a5-4bf6-95da-8e1247889b39",
+          "job_id": "3f42c820-219d-4819-bf93-61a09d3b841a",
+          "status": "SCRAPING",
+          "progress_percentage": 20,
+          "error_message": null
+        }
+      ],
+      "skipped": [
+        {
+          "url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
+          "reason": "duplicate_in_request",
+          "existing_doc_id": null
+        }
+      ]
     }
     ```
-  - `404 Not Found`: Job does not exist.
+  - `404 Not Found`: Batch job does not exist.
 - **Example `curl`**:
   ```bash
   curl -X GET "http://localhost:8000/documents/status/7b5b7b62-1fb8-4cb3-8a39-c1ffea52427a"
@@ -513,6 +570,18 @@ Copy the example environment file:
 cp .env.example .env
 ```
 
+Key environment configuration variables:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `MAX_BATCH_INGEST_SIZE` | `10` | Maximum number of URLs permitted per batch ingestion request |
+| `DATABASE_URL` | `postgresql+asyncpg://...` | Async PostgreSQL database connection URL |
+| `REDIS_HOST` / `REDIS_PORT` | `localhost:6379` | Redis host and port for ARQ background jobs |
+| `QDRANT_HOST` / `QDRANT_PORT` | `localhost:6333` | Qdrant vector database host and REST port |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama service endpoint for dense embeddings |
+| `OLLAMA_MODEL` | `bge-m3` | Embedding model identifier |
+| `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+
 ### 3. Launch Local Infrastructure
 
 Start PostgreSQL, Redis, Qdrant, and Ollama using Docker Compose:
@@ -542,7 +611,7 @@ arq app.workers.tasks.WorkerSettings
 Start the FastAPI web server:
 
 ```bash
-uvicorn app.main.py:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### 4. Running Tests & Quality Checks
