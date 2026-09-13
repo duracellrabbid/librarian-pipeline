@@ -35,7 +35,8 @@ rag-ingestion-pipeline/
 │   ├── services/     # Services: repository, extractors, chunkers, embeddings, vector_store, pipeline
 │   │   ├── chunkers/     # Context-aware HybridMarkdownChunker
 │   │   ├── embeddings/   # Asynchronous Ollama embedding client (bge-m3)
-│   │   ├── extractors/   # Crawl4AI web extraction and cleaning
+│   │   ├── extractors/   # Crawl4AI web extraction, strategies, and cleaning
+│   │   │   └── strategies/ # Domain-specific extraction strategies (Wikipedia, Registry)
 │   │   ├── vector_store/ # Qdrant vector store adapter & search
 │   │   ├── pipeline.py   # IngestionPipelineService orchestrator
 │   │   └── repository.py # Document & IngestionJob state repository
@@ -170,9 +171,18 @@ flowchart LR
   - `title`: Extracted document title (resolved via metadata, first `# H1` heading, or URL path).
   - `source_url`: Canonical URL or file path.
   - `metadata`: Arbitrary source metadata (language, canonical URL, crawl timestamp).
+- **`DomainExtractionStrategy` (`strategies.base`)**: Runtime-checkable `typing.Protocol` defining domain extraction contracts:
+  - `domain_prefix: str`: URL domain prefix identifying the target site (e.g., `https://en.wikipedia.org`).
+  - `get_run_config() -> CrawlerRunConfig`: Crawl configuration specifying excluded tags, CSS exclusion selectors, cache mode, and markdown generators.
+  - `get_browser_config() -> BrowserConfig`: Headless browser execution parameters.
+  - `clean(markdown: str) -> str`: Domain-tailored post-crawl markdown sanitizer.
+- **`WikipediaExtractionStrategy` (`strategies.wikipedia`)**: Strategy implementation for Wikipedia:
+  - Excludes navigation, header, footer, references, edit sections, and infoboxes (`nav`, `footer`, `header`, `.vector-header`, `.vector-sidebar`, `#mw-navigation`, `.reference`, `.reflist`, `.mw-editsection`, `.infobox`, `table.infobox`).
+  - Strips citation markers (`[1]`, `[note 1]`) and edit links while normalizing whitespace.
+- **`ExtractionStrategyRegistry` (`strategies.registry`)**: Registry matching URLs against domain strategies by domain prefix; defaults to singleton via `get_default_strategy_registry()`.
 - **`Crawl4AIExtractor`**: Crawler implementation backed by Crawl4AI's `AsyncWebCrawler`:
-  - Configured with default exclusion tags (`nav`, `footer`, `header`) and CSS selectors (`.vector-header`, `.vector-sidebar`, `#mw-navigation`, `.reference`, `.reflist`, `.mw-editsection`, `.infobox`, `table.infobox`) to strip navigation, sidebars, and infobox clutter.
-  - Normalizes metadata and raises domain `ExtractionError` on non-2xx HTTP responses or crawler failures.
+  - Resolves tailored domain strategy via `ExtractionStrategyRegistry` based on URL prefix.
+  - Executes crawl with domain-specific `CrawlerRunConfig` and `BrowserConfig`, post-processes markdown with `strategy.clean()`, normalizes metadata, and raises domain `ExtractionError` on non-2xx HTTP responses or crawler failures.
 - **Markdown Sanitizer (`cleaning.py`)**:
   - `remove_edit_links`: Strips `[edit]`, `[edit | edit source]`, and edit action links.
   - `remove_citation_markers`: Strips numbered citations (`[1]`, `[12]`) and footnote notes (`[note 1]`, `[citation needed]`) while preserving standard Markdown hyperlinks.

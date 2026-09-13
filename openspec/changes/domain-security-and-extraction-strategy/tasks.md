@@ -8,11 +8,11 @@
 
 ## 2. Domain Extraction Strategy Pattern
 
-- [ ] 2.1 Add failing unit tests in `tests/test_extraction_strategies.py` verifying the strategy protocol, `WikipediaExtractionStrategy`, registry strategy lookup, and error raising when no strategy matches an allowed domain.
-- [ ] 2.2 Create `app/services/extractors/strategies/base.py` defining the `DomainExtractionStrategy` protocol (`domain_prefix`, `get_run_config()`, `get_browser_config()`, `clean()`).
-- [ ] 2.3 Create `app/services/extractors/strategies/wikipedia.py` implementing `WikipediaExtractionStrategy` extracting the constants from [app/services/extractors/web.py](file:///D:/Shared/rag-ingestion-pipeline/app/services/extractors/web.py#L14-L24).
-- [ ] 2.4 Create `app/services/extractors/strategies/registry.py` implementing `ExtractionStrategyRegistry` to register and resolve strategies by domain prefix, raising `ExtractionError` when no strategy is found.
-- [ ] 2.5 Refactor `Crawl4AIExtractor` in [app/services/extractors/web.py](file:///D:/Shared/rag-ingestion-pipeline/app/services/extractors/web.py#L28-L86) to resolve strategy from registry and execute crawl with the strategy's configuration.
+- [x] 2.1 Add failing unit tests in `tests/test_extraction_strategies.py` verifying the strategy protocol, `WikipediaExtractionStrategy`, registry strategy lookup, and error raising when no strategy matches an allowed domain.
+- [x] 2.2 Create `app/services/extractors/strategies/base.py` defining the `DomainExtractionStrategy` protocol (`domain_prefix`, `get_run_config()`, `get_browser_config()`, `clean()`).
+- [x] 2.3 Create `app/services/extractors/strategies/wikipedia.py` implementing `WikipediaExtractionStrategy` extracting the constants from [app/services/extractors/web.py](file:///D:/Shared/rag-ingestion-pipeline/app/services/extractors/web.py#L14-L24).
+- [x] 2.4 Create `app/services/extractors/strategies/registry.py` implementing `ExtractionStrategyRegistry` to register and resolve strategies by domain prefix, raising `ExtractionError` when no strategy is found.
+- [x] 2.5 Refactor `Crawl4AIExtractor` in [app/services/extractors/web.py](file:///D:/Shared/rag-ingestion-pipeline/app/services/extractors/web.py#L28-L86) to resolve strategy from registry and execute crawl with the strategy's configuration.
 
 ## 3. Worker Defense-in-Depth and Pipeline Verification
 

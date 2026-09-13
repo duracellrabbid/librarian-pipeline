@@ -194,7 +194,7 @@ async def test_crawl4ai_extractor_title_fallback():
     mock_crawler.arun.return_value = mock_result
 
     extractor = Crawl4AIExtractor(crawler=mock_crawler)
-    doc = await extractor.extract("https://example.com/ada")
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/Ada_Lovelace")
 
     assert doc.title == "Ada Lovelace"
 
@@ -212,10 +212,10 @@ async def test_crawl4ai_extractor_http_error():
 
     extractor = Crawl4AIExtractor(crawler=mock_crawler)
     with pytest.raises(ExtractionError) as exc_info:
-        await extractor.extract("https://example.com/missing")
+        await extractor.extract("https://en.wikipedia.org/wiki/Missing")
 
     assert exc_info.value.status_code == 404
-    assert exc_info.value.url == "https://example.com/missing"
+    assert exc_info.value.url == "https://en.wikipedia.org/wiki/Missing"
     assert "Page Not Found" in str(exc_info.value)
 
 
@@ -227,9 +227,9 @@ async def test_crawl4ai_extractor_crawl_exception():
 
     extractor = Crawl4AIExtractor(crawler=mock_crawler)
     with pytest.raises(ExtractionError) as exc_info:
-        await extractor.extract("https://example.com/slow")
+        await extractor.extract("https://en.wikipedia.org/wiki/Slow")
 
-    assert exc_info.value.url == "https://example.com/slow"
+    assert exc_info.value.url == "https://en.wikipedia.org/wiki/Slow"
     assert "Connection timed out" in str(exc_info.value)
 
 
@@ -248,15 +248,19 @@ async def test_crawl4ai_extractor_default_crawler_lifecycle():
     with patch("app.services.extractors.web.AsyncWebCrawler") as mock_crawler_cls:
         mock_crawler_cls.return_value.__aenter__.return_value = mock_crawler_instance
 
-        extractor = Crawl4AIExtractor()
-        doc = await extractor.extract("https://example.com/context")
+        from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
+
+        custom_browser = BrowserConfig(headless=True, verbose=False)
+        custom_run = CrawlerRunConfig()
+        extractor = Crawl4AIExtractor(browser_config=custom_browser, run_config=custom_run)
+        doc = await extractor.extract("https://en.wikipedia.org/wiki/Context")
 
         assert doc.title == "Context Manager Test"
         assert doc.content == "# Context Manager Test\n\nContent body."
-        mock_crawler_cls.assert_called_once_with(config=extractor.browser_config)
+        mock_crawler_cls.assert_called_once_with(config=custom_browser)
         mock_crawler_instance.arun.assert_awaited_once_with(
-            url="https://example.com/context",
-            config=extractor.run_config,
+            url="https://en.wikipedia.org/wiki/Context",
+            config=custom_run,
         )
 
 
@@ -278,7 +282,7 @@ async def test_crawl4ai_extractor_none_result():
 
     extractor = Crawl4AIExtractor(crawler=mock_crawler)
     with pytest.raises(ExtractionError, match="No result returned"):
-        await extractor.extract("https://example.com/none")
+        await extractor.extract("https://en.wikipedia.org/wiki/None")
 
 
 @pytest.mark.asyncio
@@ -294,7 +298,7 @@ async def test_crawl4ai_extractor_unsuccessful_crawl():
 
     extractor = Crawl4AIExtractor(crawler=mock_crawler)
     with pytest.raises(ExtractionError, match="Crawl was unsuccessful"):
-        await extractor.extract("https://example.com/unsuccessful")
+        await extractor.extract("https://en.wikipedia.org/wiki/Unsuccessful")
 
 
 @pytest.mark.asyncio
@@ -314,7 +318,7 @@ async def test_crawl4ai_extractor_markdown_object_attribute():
     mock_crawler.arun.return_value = mock_result
 
     extractor = Crawl4AIExtractor(crawler=mock_crawler)
-    doc = await extractor.extract("https://example.com/obj")
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/Obj")
     assert doc.title == "Object Title"
     assert "Body content." in doc.content
 
@@ -332,5 +336,37 @@ async def test_crawl4ai_extractor_slug_fallback():
     mock_crawler.arun.return_value = mock_result
 
     extractor = Crawl4AIExtractor(crawler=mock_crawler)
-    doc = await extractor.extract("https://example.com/fallback-slug")
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/fallback-slug")
     assert doc.title == "fallback-slug"
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_unregistered_domain_raises_error():
+    """Test ExtractionError is raised immediately when no extraction strategy is registered for domain."""
+    extractor = Crawl4AIExtractor()
+    with pytest.raises(ExtractionError) as exc_info:
+        await extractor.extract("https://unregistered-domain.com/article")
+
+    assert exc_info.value.url == "https://unregistered-domain.com/article"
+    assert "No extraction strategy registered" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_custom_registry():
+    """Test Crawl4AIExtractor with explicitly provided ExtractionStrategyRegistry."""
+    from app.services.extractors.strategies.registry import ExtractionStrategyRegistry
+    from app.services.extractors.strategies.wikipedia import WikipediaExtractionStrategy
+
+    mock_result = MagicMock()
+    mock_result.status_code = 200
+    mock_result.success = True
+    mock_result.markdown = "# Custom Registry\n\nCustom content."
+    mock_result.metadata = {"title": "Custom Registry"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.return_value = mock_result
+
+    custom_registry = ExtractionStrategyRegistry(strategies=[WikipediaExtractionStrategy()])
+    extractor = Crawl4AIExtractor(registry=custom_registry, crawler=mock_crawler)
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/Custom_Reg")
+    assert doc.title == "Custom Registry"

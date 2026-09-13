@@ -9,41 +9,41 @@ from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
 
 from app.core.exceptions import ExtractionError
 from app.services.extractors.base import BaseExtractor, ExtractedDocument
-from app.services.extractors.cleaning import clean_markdown
-
-DEFAULT_WIKIPEDIA_EXCLUDED_TAGS: list[str] = [
-    "nav",
-    "footer",
-    "header",
-]
-
-DEFAULT_WIKIPEDIA_EXCLUDED_SELECTOR: str = (
-    ".vector-header, .vector-sidebar, #mw-navigation, .reference, .reflist, .mw-editsection, .infobox, table.infobox"
+from app.services.extractors.strategies import (
+    DEFAULT_WIKIPEDIA_EXCLUDED_SELECTOR,
+    DEFAULT_WIKIPEDIA_EXCLUDED_TAGS,
+    ExtractionStrategyRegistry,
+    get_default_strategy_registry,
 )
+
+__all__ = [
+    "DEFAULT_WIKIPEDIA_EXCLUDED_SELECTOR",
+    "DEFAULT_WIKIPEDIA_EXCLUDED_TAGS",
+    "Crawl4AIExtractor",
+]
 
 _FIRST_H1_PATTERN = re.compile(r"^#[ \t]+(\S.*)$", re.MULTILINE)
 
 
 class Crawl4AIExtractor(BaseExtractor):
-    """Web extractor powered by Crawl4AI AsyncWebCrawler."""
+    """Web extractor powered by Crawl4AI AsyncWebCrawler with domain-specific strategies."""
 
     def __init__(
         self,
         *,
+        registry: ExtractionStrategyRegistry | None = None,
         browser_config: BrowserConfig | None = None,
         run_config: CrawlerRunConfig | None = None,
         crawler: AsyncWebCrawler | None = None,
     ) -> None:
         """Initialize Crawl4AIExtractor with optional configurations or pre-existing crawler."""
-        self.browser_config = browser_config or BrowserConfig(headless=True, verbose=False)
-        self.run_config = run_config or CrawlerRunConfig(
-            excluded_tags=DEFAULT_WIKIPEDIA_EXCLUDED_TAGS,
-            excluded_selector=DEFAULT_WIKIPEDIA_EXCLUDED_SELECTOR,
-        )
+        self.registry = registry or get_default_strategy_registry()
+        self.browser_config = browser_config
+        self.run_config = run_config
         self._crawler = crawler
 
     async def extract(self, source: str) -> ExtractedDocument:
-        """Extract content, title, and metadata from web URL using Crawl4AI.
+        """Extract content, title, and metadata from web URL using Crawl4AI and resolved domain strategy.
 
         Args:
             source: Target web URL to extract.
@@ -52,13 +52,18 @@ class Crawl4AIExtractor(BaseExtractor):
             ExtractedDocument containing sanitized markdown and normalized metadata.
 
         Raises:
-            ExtractionError: If crawling fails, returns non-2xx status, or returns unsuccessful.
+            ExtractionError: If crawling fails, returns non-2xx status, returns unsuccessful,
+                or has no registered strategy for the domain.
         """
-        result = await self._crawl(source)
+        strategy = self.registry.get_strategy(source)
+        run_cfg = self.run_config or strategy.get_run_config()
+        browser_cfg = self.browser_config or strategy.get_browser_config()
+
+        result = await self._crawl(source, run_config=run_cfg, browser_config=browser_cfg)
         self._validate_crawl_result(result, source)
 
         raw_text = self._extract_raw_markdown(result)
-        cleaned_content = clean_markdown(raw_text)
+        cleaned_content = strategy.clean(raw_text)
 
         res_metadata: dict[str, Any] = dict(getattr(result, "metadata", None) or {})
         title = self._resolve_title(res_metadata, cleaned_content, source)
@@ -71,13 +76,20 @@ class Crawl4AIExtractor(BaseExtractor):
             metadata=metadata,
         )
 
-    async def _crawl(self, source: str) -> Any:
+    async def _crawl(
+        self,
+        source: str,
+        run_config: CrawlerRunConfig | None = None,
+        browser_config: BrowserConfig | None = None,
+    ) -> Any:
         """Execute web crawl using configured crawler or ephemeral instance."""
+        run_cfg = run_config or self.run_config or CrawlerRunConfig()
+        browser_cfg = browser_config or self.browser_config or BrowserConfig(headless=True, verbose=False)
         try:
             if self._crawler is not None:
-                return await self._crawler.arun(url=source, config=self.run_config)
-            async with AsyncWebCrawler(config=self.browser_config) as crawler:
-                return await crawler.arun(url=source, config=self.run_config)
+                return await self._crawler.arun(url=source, config=run_cfg)
+            async with AsyncWebCrawler(config=browser_cfg) as crawler:
+                return await crawler.arun(url=source, config=run_cfg)
         except Exception as exc:
             raise ExtractionError(
                 f"Extraction failed for '{source}': {exc}",
