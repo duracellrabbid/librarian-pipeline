@@ -27,7 +27,7 @@ def mock_extractor() -> AsyncMock:
     extractor.extract.return_value = ExtractedDocument(
         content="# Sample Document\n\nThis is test content.",
         title="Sample Title",
-        source_url="https://example.com/test",
+        source_url="https://en.wikipedia.org/wiki/test",
         metadata={"lang": "en"},
     )
     return extractor
@@ -166,7 +166,7 @@ async def test_pipeline_service_successful_end_to_end(
     """Test complete successful pipeline progression through all stages."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/test"
+    url = "https://en.wikipedia.org/wiki/Test"
 
     job = IngestionJob(
         id=job_id,
@@ -231,7 +231,7 @@ async def test_pipeline_service_extraction_failure(
     """Test error handling when extraction fails."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/fail"
+    url = "https://en.wikipedia.org/wiki/Fail"
 
     job = IngestionJob(
         id=job_id,
@@ -276,7 +276,7 @@ async def test_pipeline_service_chunking_failure(
     """Test error handling when chunking fails."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/chunk-fail"
+    url = "https://en.wikipedia.org/wiki/ChunkFail"
 
     job = IngestionJob(
         id=job_id,
@@ -319,7 +319,7 @@ async def test_pipeline_service_embedding_failure(
     """Test error handling when embedding generation fails."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/embed-fail"
+    url = "https://en.wikipedia.org/wiki/EmbedFail"
 
     job = IngestionJob(
         id=job_id,
@@ -361,7 +361,7 @@ async def test_pipeline_service_vector_store_failure(
     """Test error handling when vector storage upsert fails."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/qdrant-fail"
+    url = "https://en.wikipedia.org/wiki/QdrantFail"
 
     job = IngestionJob(
         id=job_id,
@@ -402,7 +402,7 @@ async def test_pipeline_run_vector_store_init_error_transitions_to_failed(
     """Test that failure during vector_store.initialize_collection marks job FAILED."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/fail-vec-init"
+    url = "https://en.wikipedia.org/wiki/FailVecInit"
 
     job = IngestionJob(
         id=job_id,
@@ -444,7 +444,7 @@ async def test_pipeline_service_empty_chunks(
     """Test pipeline execution when document yields zero chunks."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/empty"
+    url = "https://en.wikipedia.org/wiki/Empty"
 
     job = IngestionJob(
         id=job_id,
@@ -504,7 +504,7 @@ async def test_pipeline_service_failure_db_error_handling(
         session_factory=session_factory,
     )
     # Should not raise exception
-    await service.run(job_id=job_id, document_id=doc_id, url="https://example.com")
+    await service.run(job_id=job_id, document_id=doc_id, url="https://en.wikipedia.org/wiki/DbError")
 
 
 @pytest.mark.asyncio
@@ -514,7 +514,7 @@ async def test_update_document_metadata_success(mock_session: AsyncMock) -> None
     doc = Document(
         id=doc_id,
         source_type="url",
-        source_url="https://example.com",
+        source_url="https://en.wikipedia.org/wiki/Doc",
     )
 
     mock_result = MagicMock()
@@ -566,7 +566,7 @@ async def test_pipeline_service_task_cancelled_handling(
 
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/timeout"
+    url = "https://en.wikipedia.org/wiki/Timeout"
 
     job = IngestionJob(
         id=job_id,
@@ -609,7 +609,7 @@ async def test_pipeline_service_run_contextualizes_job_and_document_id(
     """Test that IngestionPipelineService.run contextualizes logger with job_id and document_id."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/test-context"
+    url = "https://en.wikipedia.org/wiki/TestContext"
 
     captured_records: list[Any] = []
     sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="INFO")
@@ -674,7 +674,7 @@ async def test_pipeline_service_failure_logs_exception_with_loguru(
     """Test that pipeline execution failure logs exception via Loguru with extra context."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/fail-log"
+    url = "https://en.wikipedia.org/wiki/FailLog"
 
     captured_records: list[Any] = []
     sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="ERROR")
@@ -724,7 +724,7 @@ async def test_pipeline_service_timeout_logs_warning_with_loguru(
 
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/cancel-log"
+    url = "https://en.wikipedia.org/wiki/CancelLog"
 
     captured_records: list[Any] = []
     sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="WARNING")
@@ -771,7 +771,7 @@ async def test_pipeline_service_db_failure_in_handle_failure_logs_exception(
     """Test that db exception in _handle_failure logs via Loguru with extra context."""
     job_id = uuid4()
     doc_id = uuid4()
-    url = "https://example.com/db-fail-log"
+    url = "https://en.wikipedia.org/wiki/DbFailLog"
 
     captured_records: list[Any] = []
     sink_id = logger.add(lambda msg: captured_records.append(msg.record), level="ERROR")
@@ -797,3 +797,150 @@ async def test_pipeline_service_db_failure_in_handle_failure_logs_exception(
         assert db_err_log["exception"] is not None
     finally:
         logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_service_rejects_unallowed_url_before_extraction(
+    mock_extractor: AsyncMock,
+    mock_chunker: MagicMock,
+    mock_embedding_client: AsyncMock,
+    mock_vector_store: AsyncMock,
+    session_factory,
+    mock_session: AsyncMock,
+) -> None:
+    """Test defense-in-depth: unallowed domain fails before calling extractor."""
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://malicious-site.com/exploit"
+
+    job = IngestionJob(
+        id=job_id,
+        document_id=doc_id,
+        status=JobStatus.PENDING.value,
+        progress_percentage=0,
+    )
+    doc = Document(id=doc_id, source_type="url", source_url=url)
+
+    def execute_side_effect(stmt):
+        mock_result = MagicMock()
+        stmt_str = str(stmt)
+        if "ingestion_jobs" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = job
+        elif "documents" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = doc
+        return mock_result
+
+    mock_session.execute.side_effect = execute_side_effect
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        chunker=mock_chunker,
+        embedding_client=mock_embedding_client,
+        vector_store=mock_vector_store,
+        session_factory=session_factory,
+    )
+
+    await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+    assert job.status == JobStatus.FAILED.value
+    assert "URL domain is not allowed" in (job.error_message or "")
+    mock_extractor.extract.assert_not_called()
+    mock_chunker.chunk.assert_not_called()
+    mock_embedding_client.embed_batch.assert_not_called()
+    mock_vector_store.upsert_chunks.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_service_rejects_subdomain_ssrf_attempt_before_extraction(
+    mock_extractor: AsyncMock,
+    mock_chunker: MagicMock,
+    mock_embedding_client: AsyncMock,
+    mock_vector_store: AsyncMock,
+    session_factory,
+    mock_session: AsyncMock,
+) -> None:
+    """Test defense-in-depth: deceptive subdomain prefix fails before calling extractor."""
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://en.wikipedia.org.attacker.com/wiki/Test"
+
+    job = IngestionJob(
+        id=job_id,
+        document_id=doc_id,
+        status=JobStatus.PENDING.value,
+        progress_percentage=0,
+    )
+    doc = Document(id=doc_id, source_type="url", source_url=url)
+
+    def execute_side_effect(stmt):
+        mock_result = MagicMock()
+        stmt_str = str(stmt)
+        if "ingestion_jobs" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = job
+        elif "documents" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = doc
+        return mock_result
+
+    mock_session.execute.side_effect = execute_side_effect
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        chunker=mock_chunker,
+        embedding_client=mock_embedding_client,
+        vector_store=mock_vector_store,
+        session_factory=session_factory,
+    )
+
+    await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+    assert job.status == JobStatus.FAILED.value
+    assert "URL domain is not allowed" in (job.error_message or "")
+    mock_extractor.extract.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_service_custom_allowed_domains(
+    mock_extractor: AsyncMock,
+    mock_chunker: MagicMock,
+    mock_embedding_client: AsyncMock,
+    mock_vector_store: AsyncMock,
+    session_factory,
+    mock_session: AsyncMock,
+) -> None:
+    """Test custom allowed_domains parameter passed to IngestionPipelineService."""
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://custom.allowed.domain/page"
+
+    job = IngestionJob(
+        id=job_id,
+        document_id=doc_id,
+        status=JobStatus.PENDING.value,
+        progress_percentage=0,
+    )
+    doc = Document(id=doc_id, source_type="url", source_url=url)
+
+    def execute_side_effect(stmt):
+        mock_result = MagicMock()
+        stmt_str = str(stmt)
+        if "ingestion_jobs" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = job
+        elif "documents" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = doc
+        return mock_result
+
+    mock_session.execute.side_effect = execute_side_effect
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        chunker=mock_chunker,
+        embedding_client=mock_embedding_client,
+        vector_store=mock_vector_store,
+        session_factory=session_factory,
+        allowed_domains=["https://custom.allowed.domain"],
+    )
+
+    await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+    assert job.status == JobStatus.INDEXED.value
+    mock_extractor.extract.assert_awaited_once_with(url)

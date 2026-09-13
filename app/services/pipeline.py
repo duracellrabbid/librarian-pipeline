@@ -11,6 +11,8 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
+from app.core.exceptions import ExtractionError
+from app.core.security import is_allowed_url
 from app.models.job import JobStatus
 from app.services.chunkers.base import BaseChunker, DocumentChunk
 from app.services.embeddings.base import BaseEmbeddingClient
@@ -29,6 +31,7 @@ class IngestionPipelineService:
         embedding_client: BaseEmbeddingClient | None = None,
         vector_store: BaseVectorStore | None = None,
         session_factory: Callable[..., Any] | None = None,
+        allowed_domains: list[str] | None = None,
     ) -> None:
         """Initialize the ingestion pipeline service with injected dependencies.
 
@@ -38,12 +41,14 @@ class IngestionPipelineService:
             embedding_client: Dense embedding client instance.
             vector_store: Vector store adapter instance.
             session_factory: Factory returning an async database session.
+            allowed_domains: Optional domain allowlist for defense-in-depth URL validation.
         """
         self.extractor = extractor or self._default_extractor()
         self.chunker = chunker or self._default_chunker()
         self.embedding_client = embedding_client or self._default_embedding_client()
         self.vector_store = vector_store or self._default_vector_store()
         self.session_factory = session_factory or async_session_factory
+        self.allowed_domains = allowed_domains
 
     @staticmethod
     def _default_extractor() -> BaseExtractor:
@@ -155,6 +160,9 @@ class IngestionPipelineService:
         url: str,
     ) -> None:
         """Execute the sequential stages of the ingestion pipeline."""
+        if not is_allowed_url(url, allowed_domains=self.allowed_domains):
+            raise ExtractionError(f"URL domain is not allowed: {url}", url=url)
+
         extracted = await self._extract_content(job_id, url)
 
         await self._update_job(job_id, JobStatus.CHUNKING, 40)

@@ -16,6 +16,6 @@
 
 ## 3. Worker Defense-in-Depth and Pipeline Verification
 
-- [ ] 3.1 Add failing unit tests in `tests/test_pipeline_service.py` asserting that `IngestionPipelineService.run` rejects unallowed URLs before invoking extraction.
-- [ ] 3.2 Update `_execute_pipeline` in [app/services/pipeline.py](file:///D:/Shared/rag-ingestion-pipeline/app/services/pipeline.py#L152-L160) to validate `is_allowed_url(url)` and raise `ExtractionError` on violation.
-- [ ] 3.3 Run `ruff check .` and `pytest --cov=app --cov-fail-under=100` to verify full test suite passes with 100% coverage.
+- [x] 3.1 Add failing unit tests in `tests/test_pipeline_service.py` asserting that `IngestionPipelineService.run` rejects unallowed URLs before invoking extraction.
+- [x] 3.2 Update `_execute_pipeline` in [app/services/pipeline.py](file:///D:/Shared/rag-ingestion-pipeline/app/services/pipeline.py#L152-L160) to validate `is_allowed_url(url)` and raise `ExtractionError` on violation.
+- [x] 3.3 Run `ruff check .` and `pytest --cov=app --cov-fail-under=100` to verify full test suite passes with 100% coverage.

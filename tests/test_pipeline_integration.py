@@ -192,7 +192,7 @@ async def in_memory_db():
 @pytest.mark.asyncio
 async def test_headless_end_to_end_pipeline_integration(in_memory_db):
     """Verify the full pipeline executes from job creation to DB and vector store verification."""
-    url = "https://example.com/high-perf-rag"
+    url = "https://en.wikipedia.org/wiki/High_Performance_RAG"
     title = "High Performance RAG Pipelines"
 
     # 1. Initialize backing mock/simulated services
@@ -271,7 +271,7 @@ async def test_headless_end_to_end_pipeline_integration(in_memory_db):
 @pytest.mark.asyncio
 async def test_headless_pipeline_integration_failure_recovery(in_memory_db):
     """Verify that failure during pipeline execution marks the job as FAILED with error message."""
-    url = "https://example.com/broken-url"
+    url = "https://en.wikipedia.org/wiki/Broken_URL"
 
     simulated_qdrant = SimulatedQdrantClient()
     vector_store = QdrantVectorStore(client=simulated_qdrant, collection_name="test_integration")

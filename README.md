@@ -331,7 +331,7 @@ dispatcher: TaskDispatcher = ArqTaskDispatcher()
 await dispatcher.enqueue_ingestion_job(
     job_id=job.id,
     document_id=document.id,
-    url="https://example.com/documentation",
+    url="https://en.wikipedia.org/wiki/Documentation",
 )
 ```
 
@@ -341,7 +341,7 @@ await dispatcher.enqueue_ingestion_job(
 
 ### 2. Ingestion Pipeline Service (`app.services.pipeline`)
 
-`IngestionPipelineService` coordinates the multi-stage document lifecycle with full dependency injection:
+`IngestionPipelineService` coordinates the multi-stage document lifecycle with full dependency injection and defense-in-depth domain validation:
 
 ```python
 from app.services.pipeline import IngestionPipelineService
@@ -352,20 +352,23 @@ pipeline = IngestionPipelineService()
 await pipeline.run(
     job_id=job.id,
     document_id=document.id,
-    url="https://example.com/documentation",
+    url="https://en.wikipedia.org/wiki/Documentation",
 )
 ```
+
+- **Defense-in-Depth Validation**: Verifies the URL against `allowed_domains` (default: `Settings.allowed_domains`) using `is_allowed_url` before triggering crawler extraction, immediately failing disallowed URLs without issuing external network requests.
+- **Dependency Injection**: Fully supports custom `extractor`, `chunker`, `embedding_client`, `vector_store`, `session_factory`, and `allowed_domains` overrides.
 
 #### Stepwise Lifecycle Overview
 
 | Stage | Progress | Description |
 |---|---|---|
 | `PENDING` | 0% | Job record created in database; waiting for queue dispatch. |
-| `SCRAPING` | 20% | `BaseExtractor` extracts clean markdown and title from source URL. |
+| `SCRAPING` | 20% | `BaseExtractor` extracts clean markdown and title from source URL (after validating URL domain allowlist). |
 | `CHUNKING` | 40% | `BaseChunker` creates `DocumentChunk` items with section breadcrumbs. |
 | `EMBEDDING` | 70% | `BaseEmbeddingClient` generates 1024-d dense vectors; `BaseVectorStore` upserts points to Qdrant. |
 | `INDEXED` | 100% | `Document` record is finalized with title, chunk count, and content hash; `finished_at` is set. |
-| `FAILED` | -- | Any uncaught exception or task cancellation/timeout (`asyncio.CancelledError`) cleanly shields and updates status to `FAILED`, records `error_message`, and marks `finished_at`. |
+| `FAILED` | -- | Any domain validation violation, uncaught exception, or task cancellation/timeout (`asyncio.CancelledError`) cleanly shields and updates status to `FAILED`, records `error_message`, and marks `finished_at`. |
 
 ### 3. ARQ Background Worker Runner (`app.workers.tasks`)
 
