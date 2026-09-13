@@ -60,7 +60,7 @@ skip_covered = false
 
 [tool.ruff]
 target-version = "py311"
-line-length = 100
+line-length = 120
 src = ["app", "tests", "scripts"]
 
 [tool.ruff.lint]
@@ -78,6 +78,7 @@ select = [
 ]
 ignore = [
     "ANN401", # Dynamically typed expressions (typing.Any)
+    "W191",   # Indentation contains tabs
 ]
 
 [tool.ruff.lint.per-file-ignores]
