@@ -12,6 +12,7 @@ from app.api.deps import get_db, get_dispatcher, get_vector_store
 from app.api.schemas import (
     DeleteResponse,
     DocumentCheckResponse,
+    DocumentListResponse,
     IngestRequest,
     IngestResponse,
     JobStatusResponse,
@@ -24,6 +25,7 @@ from app.services.repository import (
     check_active_url,
     create_batch_and_jobs,
     get_batch_job_status,
+    list_indexed_documents,
     soft_delete_document,
 )
 from app.services.vector_store.qdrant import QdrantVectorStore
@@ -94,6 +96,51 @@ async def get_job_status(
 ) -> JobStatusResponse:
     """Retrieve aggregate status and progress for a batch ingestion job."""
     return await get_batch_job_status(session=session, batch_id=main_job_id)
+
+
+@router.get(
+    "",
+    response_model=DocumentListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List actively indexed documents",
+)
+async def list_documents(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=100,
+            description="Maximum number of documents to return per page",
+        ),
+    ] = 20,
+    offset: Annotated[
+        int,
+        Query(
+            ge=0,
+            description="Number of documents to skip",
+        ),
+    ] = 0,
+    query: Annotated[
+        str | None,
+        Query(
+            description="Optional case-insensitive substring search for URL or title",
+        ),
+    ] = None,
+) -> DocumentListResponse:
+    """Retrieve a paginated list of documents currently indexed in vector storage."""
+    total, items = await list_indexed_documents(
+        session=session,
+        limit=limit,
+        offset=offset,
+        query=query,
+    )
+    return DocumentListResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=items,
+    )
 
 
 @router.get(

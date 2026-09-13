@@ -1,11 +1,12 @@
 """Request and response Pydantic schemas for the REST API."""
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-from app.models.job import BatchJobStatus
+from app.models.job import BatchJobStatus, JobStatus
 
 
 class DocumentIngestItem(BaseModel):
@@ -175,4 +176,39 @@ class DeleteResponse(BaseModel):
     message: str = Field(
         default="Document and associated vectors successfully deleted",
         description="Human-readable confirmation message",
+    )
+
+
+class DocumentListItemResponse(BaseModel):
+    """Specification of an individual indexed document within a paginated list."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID = Field(description="Unique identifier of the document")
+    source_url: str = Field(description="Source URL of the indexed document")
+    title: str | None = Field(default=None, description="Extracted or provided title")
+    status: str = Field(
+        default=JobStatus.INDEXED.value,
+        description="Current lifecycle status of the document",
+    )
+    chunk_count: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of chunks indexed for document",
+    )
+    created_at: datetime = Field(description="Timestamp when the document was created")
+    updated_at: datetime = Field(description="Timestamp when the document was last updated")
+
+
+class DocumentListResponse(BaseModel):
+    """Paginated list of actively indexed documents."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    total: int = Field(default=0, ge=0, description="Total number of matching indexed documents")
+    limit: int = Field(default=20, ge=1, le=100, description="Page limit applied to query")
+    offset: int = Field(default=0, ge=0, description="Offset applied to query")
+    items: list[DocumentListItemResponse] = Field(
+        default_factory=list,
+        description="List of indexed document records",
     )

@@ -598,3 +598,225 @@ async def test_update_document_metadata_not_found(session: AsyncSession):
     missing_id = uuid4()
     with pytest.raises(DocumentNotFoundError, match=f"Document {missing_id} not found"):
         await update_document_metadata(session=session, document_id=missing_id, title="Test")
+
+
+@pytest.mark.asyncio
+async def test_list_indexed_documents_default_pagination(session: AsyncSession):
+    """Verify list_indexed_documents default pagination returns max 20 items
+    and accurate total count.
+    """
+    from app.services.repository import (
+        create_document_and_job,
+        list_indexed_documents,
+        update_job_status,
+    )
+
+    for i in range(25):
+        doc, job = await create_document_and_job(
+            session=session,
+            source_type="url",
+            source_url=f"https://example.com/doc-{i:02d}",
+            title=f"Doc {i:02d}",
+        )
+        await update_job_status(session, job.id, JobStatus.INDEXED)
+
+    total, items = await list_indexed_documents(session)
+
+    assert total == 25
+    assert len(items) == 20
+    assert items[0].status == JobStatus.INDEXED.value
+    assert items[0].source_url.startswith("https://example.com/doc-")
+
+
+@pytest.mark.asyncio
+async def test_list_indexed_documents_custom_limit_offset(session: AsyncSession):
+    """Verify list_indexed_documents custom limit and offset slicing."""
+    from app.services.repository import (
+        create_document_and_job,
+        list_indexed_documents,
+        update_job_status,
+    )
+
+    for i in range(5):
+        doc, job = await create_document_and_job(
+            session=session,
+            source_type="url",
+            source_url=f"https://example.com/slice-{i}",
+            title=f"Slice {i}",
+        )
+        await update_job_status(session, job.id, JobStatus.INDEXED)
+
+    total, items = await list_indexed_documents(session, limit=2, offset=1)
+
+    assert total == 5
+    assert len(items) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_indexed_documents_substring_filter(session: AsyncSession):
+    """Verify list_indexed_documents filters by URL and title substring case-insensitively."""
+    from app.services.repository import (
+        create_document_and_job,
+        list_indexed_documents,
+        update_job_status,
+    )
+
+    d1, j1 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/quantum-physics",
+        title="Intro to Physics",
+    )
+    await update_job_status(session, j1.id, JobStatus.INDEXED)
+
+    d2, j2 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/ai-agents",
+        title="Quantum Computing Advances",
+    )
+    await update_job_status(session, j2.id, JobStatus.INDEXED)
+
+    d3, j3 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/biology",
+        title="Cell Structure",
+    )
+    await update_job_status(session, j3.id, JobStatus.INDEXED)
+
+    total_q, items_q = await list_indexed_documents(session, query="quantum")
+    assert total_q == 2
+    assert {item.id for item in items_q} == {d1.id, d2.id}
+
+    total_p, items_p = await list_indexed_documents(session, query="PHYSICS")
+    assert total_p == 1
+    assert items_p[0].id == d1.id
+
+    total_none, items_none = await list_indexed_documents(session, query="nonexistent")
+    assert total_none == 0
+    assert len(items_none) == 0
+
+
+@pytest.mark.asyncio
+async def test_list_indexed_documents_excludes_soft_deleted(session: AsyncSession):
+    """Verify list_indexed_documents excludes soft-deleted documents."""
+    from app.services.repository import (
+        create_document_and_job,
+        list_indexed_documents,
+        soft_delete_document,
+        update_job_status,
+    )
+
+    d1, j1 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/active",
+        title="Active Doc",
+    )
+    await update_job_status(session, j1.id, JobStatus.INDEXED)
+
+    d2, j2 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/deleted",
+        title="Deleted Doc",
+    )
+    await update_job_status(session, j2.id, JobStatus.INDEXED)
+    await soft_delete_document(session, d2.id)
+
+    total, items = await list_indexed_documents(session)
+    assert total == 1
+    assert items[0].id == d1.id
+
+
+@pytest.mark.asyncio
+async def test_list_indexed_documents_excludes_non_indexed_jobs(session: AsyncSession):
+    """Verify list_indexed_documents excludes documents whose latest job is not INDEXED."""
+    from app.services.repository import (
+        create_document_and_job,
+        list_indexed_documents,
+        update_job_status,
+    )
+
+    d1, j1 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/indexed",
+        title="Indexed Doc",
+    )
+    await update_job_status(session, j1.id, JobStatus.INDEXED)
+
+    d2, j2 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/pending",
+        title="Pending Doc",
+    )
+    # job remains PENDING
+
+    d3, j3 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/failed",
+        title="Failed Doc",
+    )
+    await update_job_status(session, j3.id, JobStatus.FAILED)
+
+    total, items = await list_indexed_documents(session)
+    assert total == 1
+    assert items[0].id == d1.id
+
+
+@pytest.mark.asyncio
+async def test_list_indexed_documents_multiple_jobs_latest_status(session: AsyncSession):
+    """Verify list_indexed_documents respects only the latest job status for a document."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.repository import create_document_and_job, list_indexed_documents
+
+    # Document A: old job FAILED, newer job INDEXED -> should be included
+    da, ja1 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/reingested-success",
+        title="Reingested Success",
+    )
+    ja1.created_at = datetime.now(UTC) - timedelta(hours=2)
+    ja1.status = JobStatus.FAILED.value
+    session.add(ja1)
+    await session.commit()
+
+    ja2 = IngestionJob(
+        document_id=da.id,
+        status=JobStatus.INDEXED.value,
+        progress_percentage=100,
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    session.add(ja2)
+    await session.commit()
+
+    # Document B: old job INDEXED, newer job FAILED -> should be excluded
+    db, jb1 = await create_document_and_job(
+        session=session,
+        source_type="url",
+        source_url="https://example.com/reingested-failed",
+        title="Reingested Failed",
+    )
+    jb1.created_at = datetime.now(UTC) - timedelta(hours=2)
+    jb1.status = JobStatus.INDEXED.value
+    session.add(jb1)
+    await session.commit()
+
+    jb2 = IngestionJob(
+        document_id=db.id,
+        status=JobStatus.FAILED.value,
+        progress_percentage=0,
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    session.add(jb2)
+    await session.commit()
+
+    total, items = await list_indexed_documents(session)
+    assert total == 1
+    assert items[0].id == da.id

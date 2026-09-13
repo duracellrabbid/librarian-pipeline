@@ -29,7 +29,7 @@ rag-ingestion-pipeline/
 │   │   ├── schemas.py    # Pydantic request and response schemas
 │   │   └── v1/           # API version 1 router and endpoints
 │   │       └── endpoints/
-│   │           └── documents.py # Document ingestion, status, check, delete
+│   │           └── documents.py # Document ingestion, status, list, check, delete
 │   ├── core/         # Settings, logging (Loguru & intercept), database engine, dispatcher protocol
 │   ├── models/       # SQLModel database tables and domain entities
 │   ├── services/     # Services: repository, extractors, chunkers, embeddings, vector_store, pipeline
@@ -540,6 +540,44 @@ Purges all vector embeddings from Qdrant matching `doc_id` and soft-deletes the 
 - **Example `curl`**:
   ```bash
   curl -X DELETE "http://localhost:8000/api/v1/documents/0d635fc2-d1d4-4cf5-94cf-6c0756778f28"
+  ```
+
+#### 5. List Indexed Documents (`GET /api/v1/documents`)
+
+Retrieves a paginated list of documents currently actively indexed in PostgreSQL and Qdrant. Excludes soft-deleted documents and documents whose latest job state is not `INDEXED`.
+
+- **Query Parameters**:
+  - `limit` (integer, optional, default: `20`, minimum: `1`, maximum: `100`): Maximum number of documents to return per page.
+  - `offset` (integer, optional, default: `0`, minimum: `0`): Number of documents to skip for pagination.
+  - `query` (string, optional): Case-insensitive substring search filter matching against document `title` or `source_url`.
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "total": 42,
+      "limit": 20,
+      "offset": 0,
+      "items": [
+        {
+          "id": "0d635fc2-d1d4-4cf5-94cf-6c0756778f28",
+          "source_url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
+          "title": "Artificial Intelligence",
+          "status": "INDEXED",
+          "chunk_count": 14,
+          "created_at": "2026-09-10T12:00:00Z",
+          "updated_at": "2026-09-10T12:01:00Z"
+        }
+      ]
+    }
+    ```
+  - `422 Unprocessable Entity`: Pagination parameters out of valid range (e.g. `limit > 100` or `offset < 0`).
+- **Example `curl`**:
+  ```bash
+  # Default listing (first 20 indexed articles)
+  curl -X GET "http://localhost:8000/api/v1/documents"
+
+  # Filter by query with custom pagination
+  curl -X GET "http://localhost:8000/api/v1/documents?query=intelligence&limit=10&offset=0"
   ```
 
 ---

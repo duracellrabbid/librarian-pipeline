@@ -316,6 +316,180 @@ class TestCheckEndpoint:
         assert response.status_code == 422
 
 
+class TestListDocumentsEndpoint:
+    """Tests for GET /api/v1/documents endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_list_documents_default_pagination(
+        self,
+        client: AsyncClient,
+        async_session: AsyncSession,
+    ) -> None:
+        from app.services.repository import update_job_status
+
+        for i in range(25):
+            doc, job = await create_document_and_job(
+                async_session,
+                source_type="url",
+                source_url=f"https://example.com/item-{i:02d}",
+                title=f"Item {i:02d}",
+            )
+            await update_job_status(async_session, job.id, JobStatus.INDEXED)
+
+        response = await client.get("/api/v1/documents")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 25
+        assert data["limit"] == 20
+        assert data["offset"] == 0
+        assert len(data["items"]) == 20
+        first = data["items"][0]
+        assert first["status"] == JobStatus.INDEXED.value
+        assert "id" in first
+        assert "source_url" in first
+        assert "chunk_count" in first
+
+    @pytest.mark.asyncio
+    async def test_list_documents_custom_pagination(
+        self,
+        client: AsyncClient,
+        async_session: AsyncSession,
+    ) -> None:
+        from app.services.repository import update_job_status
+
+        for i in range(5):
+            _, job = await create_document_and_job(
+                async_session,
+                source_type="url",
+                source_url=f"https://example.com/page-{i}",
+                title=f"Page {i}",
+            )
+            await update_job_status(async_session, job.id, JobStatus.INDEXED)
+
+        response = await client.get("/api/v1/documents", params={"limit": 2, "offset": 1})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 5
+        assert data["limit"] == 2
+        assert data["offset"] == 1
+        assert len(data["items"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_list_documents_invalid_pagination_returns_422(
+        self,
+        client: AsyncClient,
+    ) -> None:
+        res1 = await client.get("/api/v1/documents", params={"limit": 0})
+        assert res1.status_code == 422
+
+        res2 = await client.get("/api/v1/documents", params={"limit": 101})
+        assert res2.status_code == 422
+
+        res3 = await client.get("/api/v1/documents", params={"offset": -1})
+        assert res3.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_list_documents_search_query(
+        self,
+        client: AsyncClient,
+        async_session: AsyncSession,
+    ) -> None:
+        from app.services.repository import update_job_status
+
+        d1, j1 = await create_document_and_job(
+            async_session,
+            source_type="url",
+            source_url="https://example.com/quantum-physics",
+            title="Intro to Physics",
+        )
+        await update_job_status(async_session, j1.id, JobStatus.INDEXED)
+
+        d2, j2 = await create_document_and_job(
+            async_session,
+            source_type="url",
+            source_url="https://example.com/ai-agents",
+            title="Quantum Computing Advances",
+        )
+        await update_job_status(async_session, j2.id, JobStatus.INDEXED)
+
+        d3, j3 = await create_document_and_job(
+            async_session,
+            source_type="url",
+            source_url="https://example.com/biology",
+            title="Cell Structure",
+        )
+        await update_job_status(async_session, j3.id, JobStatus.INDEXED)
+
+        res_q = await client.get("/api/v1/documents", params={"query": "quantum"})
+        assert res_q.status_code == 200
+        data_q = res_q.json()
+        assert data_q["total"] == 2
+        assert {item["id"] for item in data_q["items"]} == {str(d1.id), str(d2.id)}
+
+        res_p = await client.get("/api/v1/documents", params={"query": "PHYSICS"})
+        assert res_p.status_code == 200
+        data_p = res_p.json()
+        assert data_p["total"] == 1
+        assert data_p["items"][0]["id"] == str(d1.id)
+
+    @pytest.mark.asyncio
+    async def test_list_documents_excludes_unindexed_and_deleted(
+        self,
+        client: AsyncClient,
+        async_session: AsyncSession,
+    ) -> None:
+        from app.services.repository import soft_delete_document, update_job_status
+
+        d1, j1 = await create_document_and_job(
+            async_session,
+            source_type="url",
+            source_url="https://example.com/active-indexed",
+            title="Active Indexed",
+        )
+        await update_job_status(async_session, j1.id, JobStatus.INDEXED)
+
+        _, _ = await create_document_and_job(
+            async_session,
+            source_type="url",
+            source_url="https://example.com/pending-doc",
+            title="Pending",
+        )
+
+        _, j3 = await create_document_and_job(
+            async_session,
+            source_type="url",
+            source_url="https://example.com/failed-doc",
+            title="Failed",
+        )
+        await update_job_status(async_session, j3.id, JobStatus.FAILED)
+
+        d4, j4 = await create_document_and_job(
+            async_session,
+            source_type="url",
+            source_url="https://example.com/deleted-indexed",
+            title="Deleted Indexed",
+        )
+        await update_job_status(async_session, j4.id, JobStatus.INDEXED)
+        await soft_delete_document(async_session, d4.id)
+
+        response = await client.get("/api/v1/documents")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["items"][0]["id"] == str(d1.id)
+
+    @pytest.mark.asyncio
+    async def test_list_documents_direct_invocation(
+        self,
+        async_session: AsyncSession,
+    ) -> None:
+        from app.api.v1.endpoints.documents import list_documents
+
+        res = await list_documents(session=async_session, limit=10, offset=0, query=None)
+        assert res.total == 0
+        assert res.items == []
+
+
 class TestDeleteEndpoint:
     """Tests for DELETE /api/v1/documents/{doc_id} endpoint."""
 

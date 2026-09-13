@@ -2,14 +2,17 @@
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
+from sqlalchemy import and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.schemas import (
     ChildJobStatusResponse,
     DocumentIngestItem,
+    DocumentListItemResponse,
     JobStatusResponse,
     SkippedDocumentItem,
 )
@@ -399,3 +402,83 @@ async def update_document_metadata(
     await session.commit()
     await session.refresh(document)
     return document
+
+
+def _build_indexed_documents_filters(query: str | None = None) -> list[Any]:
+    """Construct base filter conditions and indexed document subquery."""
+    latest_job_time = (
+        select(
+            IngestionJob.document_id,
+            func.max(IngestionJob.created_at).label("max_created_at"),
+        )
+        .group_by(IngestionJob.document_id)
+        .subquery()
+    )
+
+    indexed_docs_subquery = (
+        select(IngestionJob.document_id)
+        .join(
+            latest_job_time,
+            and_(
+                IngestionJob.document_id == latest_job_time.c.document_id,
+                IngestionJob.created_at == latest_job_time.c.max_created_at,
+            ),
+        )
+        .where(IngestionJob.status == JobStatus.INDEXED.value)
+        .subquery()
+    )
+
+    filters: list[Any] = [
+        Document.deleted_at.is_(None),
+        Document.id.in_(select(indexed_docs_subquery)),
+    ]
+
+    if query and query.strip():
+        search_pattern = f"%{query.strip()}%"
+        filters.append(
+            or_(
+                Document.source_url.ilike(search_pattern),
+                Document.title.ilike(search_pattern),
+            )
+        )
+
+    return filters
+
+
+async def list_indexed_documents(
+    session: AsyncSession,
+    limit: int = 20,
+    offset: int = 0,
+    query: str | None = None,
+) -> tuple[int, list[DocumentListItemResponse]]:
+    """Retrieve paginated active documents whose latest ingestion job is INDEXED."""
+    filters = _build_indexed_documents_filters(query)
+
+    count_stmt = select(func.count(Document.id)).where(*filters)
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    data_stmt = (
+        select(Document)
+        .where(*filters)
+        .order_by(Document.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await session.execute(data_stmt)
+    documents = result.scalars().all()
+
+    items = [
+        DocumentListItemResponse(
+            id=doc.id,
+            source_url=doc.source_url,
+            title=doc.title,
+            status=JobStatus.INDEXED.value,
+            chunk_count=doc.chunk_count,
+            created_at=doc.created_at,
+            updated_at=doc.updated_at,
+        )
+        for doc in documents
+    ]
+
+    return total, items
