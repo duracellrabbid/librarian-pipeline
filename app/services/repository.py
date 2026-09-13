@@ -16,6 +16,7 @@ from app.api.schemas import (
     JobStatusResponse,
     SkippedDocumentItem,
 )
+from app.core.security import is_allowed_url
 from app.models import (
     BatchIngestionJob,
     BatchJobStatus,
@@ -95,6 +96,7 @@ async def create_batch_and_jobs(
     session: AsyncSession,
     items: Sequence[DocumentIngestItem],
     source_type: str = "url",
+    allowed_domains: list[str] | None = None,
 ) -> tuple[BatchIngestionJob, list[tuple[Document, IngestionJob]], list[SkippedDocumentItem]]:
     """Register a batch and associated documents and jobs with pre-flight status filtering."""
     unique_items, skipped_items = _deduplicate_items(items)
@@ -111,6 +113,16 @@ async def create_batch_and_jobs(
 
     for item in unique_items:
         url_str = str(item.url)
+        if not is_allowed_url(url_str, allowed_domains=allowed_domains):
+            skipped_items.append(
+                SkippedDocumentItem(
+                    url=url_str,
+                    reason="domain_not_allowed",
+                    existing_doc_id=None,
+                )
+            )
+            continue
+
         outcome, existing_doc = await _inspect_single_url_status(session, url_str)
 
         if outcome in ("already_ingested", "currently_ingesting"):

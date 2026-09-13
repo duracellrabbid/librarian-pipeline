@@ -230,8 +230,8 @@ class TestCompleteDocumentLifecycle:
         """Verify full lifecycle with intra-request duplicates, partial failures, and re-ingest."""
         from uuid import UUID
 
-        url1 = "https://example.com/doc1"
-        url2 = "https://example.com/doc2"
+        url1 = "https://en.wikipedia.org/wiki/Doc1"
+        url2 = "https://en.wikipedia.org/wiki/Doc2"
 
         # 1. Submit batch with duplicate URL in request
         resp1 = await integration_client.post(
@@ -284,7 +284,7 @@ class TestCompleteDocumentLifecycle:
         # - url1 is INDEXED -> should be skipped (already_ingested)
         # - url2 was FAILED -> should be re-accepted
         # - url3 is brand new -> should be accepted
-        url3 = "https://example.com/doc3"
+        url3 = "https://en.wikipedia.org/wiki/Doc3"
         resp2 = await integration_client.post(
             "/api/v1/documents/ingest",
             json={

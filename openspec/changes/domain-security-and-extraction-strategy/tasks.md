@@ -1,10 +1,10 @@
 ## 1. Domain Configuration and Security Validation
 
-- [ ] 1.1 Add failing unit tests in `tests/test_domain_validation.py` for `is_allowed_url` verifying exact full-URL prefix matching against allowed domains and rejection of subdomains/SSRF targets.
-- [ ] 1.2 Add `allowed_domains: list[str] = Field(default_factory=lambda: ["https://en.wikipedia.org"])` to `Settings` in [app/core/config.py](file:///D:/Shared/rag-ingestion-pipeline/app/core/config.py#L25-L30).
-- [ ] 1.3 Implement `is_allowed_url(url: str, allowed_domains: list[str] | None = None) -> bool` in `app/core/security.py` and verify tests pass.
-- [ ] 1.4 Add failing unit tests in `tests/test_documents_endpoints.py` and `tests/test_repository.py` verifying that batch submission skips URLs with unallowed domains using reason `domain_not_allowed`.
-- [ ] 1.5 Update `create_batch_and_jobs` in [app/services/repository.py](file:///D:/Shared/rag-ingestion-pipeline/app/services/repository.py#L113-L125) to check `is_allowed_url` and record `SkippedDocumentItem(url=url_str, reason="domain_not_allowed")`.
+- [x] 1.1 Add failing unit tests in `tests/test_domain_validation.py` for `is_allowed_url` verifying exact full-URL prefix matching against allowed domains and rejection of subdomains/SSRF targets.
+- [x] 1.2 Add `allowed_domains: list[str] = Field(default_factory=lambda: ["https://en.wikipedia.org"])` to `Settings` in [app/core/config.py](file:///D:/Shared/rag-ingestion-pipeline/app/core/config.py#L25-L30).
+- [x] 1.3 Implement `is_allowed_url(url: str, allowed_domains: list[str] | None = None) -> bool` in `app/core/security.py` and verify tests pass.
+- [x] 1.4 Add failing unit tests in `tests/test_documents_endpoints.py` and `tests/test_repository.py` verifying that batch submission skips URLs with unallowed domains using reason `domain_not_allowed`.
+- [x] 1.5 Update `create_batch_and_jobs` in [app/services/repository.py](file:///D:/Shared/rag-ingestion-pipeline/app/services/repository.py#L113-L125) to check `is_allowed_url` and record `SkippedDocumentItem(url=url_str, reason="domain_not_allowed")`.
 
 ## 2. Domain Extraction Strategy Pattern
 

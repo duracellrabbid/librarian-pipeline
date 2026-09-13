@@ -129,8 +129,8 @@ class TestIngestEndpoint:
     ) -> None:
         payload = {
             "documents": [
-                {"url": "https://example.com/dup", "title": "First"},
-                {"url": "https://example.com/dup", "title": "Second"},
+                {"url": "https://en.wikipedia.org/wiki/Dup", "title": "First"},
+                {"url": "https://en.wikipedia.org/wiki/Dup", "title": "Second"},
             ]
         }
         response = await client.post("/api/v1/documents/ingest", json=payload)
@@ -148,7 +148,7 @@ class TestIngestEndpoint:
         async_session: AsyncSession,
         mock_dispatcher: AsyncMock,
     ) -> None:
-        url = "https://example.com/already-active"
+        url = "https://en.wikipedia.org/wiki/Already_Active"
         await create_document_and_job(async_session, source_type="url", source_url=url)
 
         payload = {"documents": [{"url": url}]}
@@ -168,7 +168,7 @@ class TestIngestEndpoint:
     ) -> None:
         from app.services.repository import update_job_status
 
-        url = "https://example.com/failed-reingest"
+        url = "https://en.wikipedia.org/wiki/Failed_Reingest"
         _, job = await create_document_and_job(async_session, source_type="url", source_url=url)
         await update_job_status(async_session, job_id=job.id, status=JobStatus.FAILED)
 
@@ -219,7 +219,7 @@ class TestStatusEndpoint:
 
         batch, _, _ = await create_batch_and_jobs(
             async_session,
-            [DocumentIngestItem(url="https://example.com/status-test")],
+            [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Status_Test")],
         )
         response = await client.get(f"/api/v1/documents/status/{batch.id}")
         assert response.status_code == 200
@@ -593,7 +593,7 @@ class TestDirectHandlerInvocations:
         from app.api.v1.endpoints.documents import ingest_document
         from app.models import BatchJobStatus
 
-        req = IngestRequest(documents=[{"url": "https://example.com/direct-ingest", "title": "Direct Title"}])
+        req = IngestRequest(documents=[{"url": "https://en.wikipedia.org/wiki/Direct_Ingest", "title": "Direct Title"}])
         resp = await ingest_document(req, async_session, mock_dispatcher)
         assert resp.status == BatchJobStatus.PENDING.value
         assert resp.accepted_count == 1
@@ -610,7 +610,7 @@ class TestDirectHandlerInvocations:
 
         batch, _, _ = await create_batch_and_jobs(
             async_session,
-            [DocumentIngestItem(url="https://example.com/direct-status")],
+            [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Direct_Status")],
         )
         resp = await get_job_status(batch.id, async_session)
         assert resp.main_job_id == batch.id

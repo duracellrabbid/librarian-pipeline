@@ -297,8 +297,8 @@ async def test_create_batch_and_jobs_all_accepted(session: AsyncSession):
     from app.services.repository import create_batch_and_jobs
 
     items = [
-        DocumentIngestItem(url="https://example.com/page1", title="Page 1"),
-        DocumentIngestItem(url="https://example.com/page2", title="Page 2"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/Page1", title="Page 1"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/Page2", title="Page 2"),
     ]
 
     batch, accepted, skipped = await create_batch_and_jobs(session, items)
@@ -311,7 +311,7 @@ async def test_create_batch_and_jobs_all_accepted(session: AsyncSession):
     assert len(skipped) == 0
 
     doc1, job1 = accepted[0]
-    assert doc1.source_url == "https://example.com/page1"
+    assert doc1.source_url == "https://en.wikipedia.org/wiki/Page1"
     assert doc1.title == "Page 1"
     assert job1.batch_id == batch.id
     assert job1.document_id == doc1.id
@@ -325,8 +325,8 @@ async def test_create_batch_and_jobs_with_intra_request_duplicates(session: Asyn
     from app.services.repository import create_batch_and_jobs
 
     items = [
-        DocumentIngestItem(url="https://example.com/duplicate", title="First Occurrence"),
-        DocumentIngestItem(url="https://example.com/duplicate", title="Second Occurrence"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/Duplicate", title="First Occurrence"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/Duplicate", title="Second Occurrence"),
     ]
 
     batch, accepted, skipped = await create_batch_and_jobs(session, items)
@@ -336,7 +336,7 @@ async def test_create_batch_and_jobs_with_intra_request_duplicates(session: Asyn
     assert batch.skipped_count == 1
     assert len(accepted) == 1
     assert len(skipped) == 1
-    assert skipped[0].url == "https://example.com/duplicate"
+    assert skipped[0].url == "https://en.wikipedia.org/wiki/Duplicate"
     assert skipped[0].reason == "duplicate_in_request"
 
 
@@ -353,11 +353,11 @@ async def test_create_batch_and_jobs_skips_already_indexed(session: AsyncSession
     doc, job = await create_document_and_job(
         session=session,
         source_type="url",
-        source_url="https://example.com/indexed-page",
+        source_url="https://en.wikipedia.org/wiki/Indexed_Page",
     )
     await update_job_status(session=session, job_id=job.id, status=JobStatus.INDEXED)
 
-    items = [DocumentIngestItem(url="https://example.com/indexed-page")]
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Indexed_Page")]
     batch, accepted, skipped = await create_batch_and_jobs(session, items)
 
     assert batch.accepted_count == 0
@@ -377,10 +377,10 @@ async def test_create_batch_and_jobs_skips_in_progress(session: AsyncSession):
     doc, _ = await create_document_and_job(
         session=session,
         source_type="url",
-        source_url="https://example.com/ingesting-page",
+        source_url="https://en.wikipedia.org/wiki/Ingesting_Page",
     )
 
-    items = [DocumentIngestItem(url="https://example.com/ingesting-page")]
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Ingesting_Page")]
     batch, accepted, skipped = await create_batch_and_jobs(session, items)
 
     assert batch.accepted_count == 0
@@ -403,11 +403,11 @@ async def test_create_batch_and_jobs_reingests_failed(session: AsyncSession):
     doc, job = await create_document_and_job(
         session=session,
         source_type="url",
-        source_url="https://example.com/failed-page",
+        source_url="https://en.wikipedia.org/wiki/Failed_Page",
     )
     await update_job_status(session=session, job_id=job.id, status=JobStatus.FAILED)
 
-    items = [DocumentIngestItem(url="https://example.com/failed-page")]
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Failed_Page")]
     batch, accepted, skipped = await create_batch_and_jobs(session, items)
 
     assert batch.accepted_count == 1
@@ -431,8 +431,8 @@ async def test_get_batch_job_status_success(session: AsyncSession):
     )
 
     items = [
-        DocumentIngestItem(url="https://example.com/p1"),
-        DocumentIngestItem(url="https://example.com/p2"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/P1"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/P2"),
     ]
     batch, accepted, _ = await create_batch_and_jobs(session, items)
     job1_id = accepted[0][1].id
@@ -471,11 +471,11 @@ async def test_get_batch_job_status_all_skipped_total_jobs_zero(session: AsyncSe
     from app.services.repository import create_batch_and_jobs, get_batch_job_status
 
     items = [
-        DocumentIngestItem(url="https://example.com/dup"),
-        DocumentIngestItem(url="https://example.com/dup"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/DupStatus"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/DupStatus"),
     ]
     # First batch accepts one, second batch with same URL will skip all
-    await create_batch_and_jobs(session, [DocumentIngestItem(url="https://example.com/dup")])
+    await create_batch_and_jobs(session, [DocumentIngestItem(url="https://en.wikipedia.org/wiki/DupStatus")])
     batch2, _, _ = await create_batch_and_jobs(session, items)
 
     status_resp = await get_batch_job_status(session, batch2.id)
@@ -495,7 +495,7 @@ async def test_get_batch_job_status_all_completed(session: AsyncSession):
         update_job_status,
     )
 
-    items = [DocumentIngestItem(url="https://example.com/c1")]
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/C1")]
     batch, accepted, _ = await create_batch_and_jobs(session, items)
     await update_job_status(session, accepted[0][1].id, JobStatus.INDEXED)
 
@@ -516,7 +516,7 @@ async def test_get_batch_job_status_all_failed(session: AsyncSession):
         update_job_status,
     )
 
-    items = [DocumentIngestItem(url="https://example.com/f1")]
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/F1")]
     batch, accepted, _ = await create_batch_and_jobs(session, items)
     await update_job_status(session, accepted[0][1].id, JobStatus.FAILED)
 
@@ -538,8 +538,8 @@ async def test_get_batch_job_status_partially_failed(session: AsyncSession):
     )
 
     items = [
-        DocumentIngestItem(url="https://example.com/pf1"),
-        DocumentIngestItem(url="https://example.com/pf2"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/PF1"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/PF2"),
     ]
     batch, accepted, _ = await create_batch_and_jobs(session, items)
     await update_job_status(session, accepted[0][1].id, JobStatus.INDEXED)
@@ -558,7 +558,7 @@ async def test_get_batch_job_status_pending(session: AsyncSession):
     from app.models import BatchJobStatus
     from app.services.repository import create_batch_and_jobs, get_batch_job_status
 
-    items = [DocumentIngestItem(url="https://example.com/pend1")]
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Pend1")]
     batch, _, _ = await create_batch_and_jobs(session, items)
 
     status_resp = await get_batch_job_status(session, batch.id)
@@ -820,3 +820,76 @@ async def test_list_indexed_documents_multiple_jobs_latest_status(session: Async
     total, items = await list_indexed_documents(session)
     assert total == 1
     assert items[0].id == da.id
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_skips_unallowed_domain(session: AsyncSession):
+    """Verify create_batch_and_jobs skips URLs from unallowed domains with domain_not_allowed."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import BatchJobStatus
+    from app.services.repository import create_batch_and_jobs
+
+    items = [
+        DocumentIngestItem(url="https://unallowed.com/article", title="Unallowed"),
+    ]
+
+    batch, accepted, skipped = await create_batch_and_jobs(session, items)
+
+    assert batch.total_count == 1
+    assert batch.accepted_count == 0
+    assert batch.skipped_count == 1
+    assert len(accepted) == 0
+    assert len(skipped) == 1
+    assert skipped[0].url == "https://unallowed.com/article"
+    assert skipped[0].reason == "domain_not_allowed"
+    assert batch.status == BatchJobStatus.COMPLETED.value
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_mixed_allowed_and_unallowed_domains(session: AsyncSession):
+    """Verify create_batch_and_jobs accepts allowed domains while skipping unallowed domains."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import BatchJobStatus
+    from app.services.repository import create_batch_and_jobs
+
+    items = [
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/Python", title="Wikipedia Python"),
+        DocumentIngestItem(url="https://evil.com/malware", title="Evil Malware"),
+    ]
+
+    batch, accepted, skipped = await create_batch_and_jobs(session, items)
+
+    assert batch.total_count == 2
+    assert batch.accepted_count == 1
+    assert batch.skipped_count == 1
+    assert batch.status == BatchJobStatus.PENDING.value
+    assert len(accepted) == 1
+    assert len(skipped) == 1
+    assert accepted[0][0].source_url == "https://en.wikipedia.org/wiki/Python"
+    assert skipped[0].url == "https://evil.com/malware"
+    assert skipped[0].reason == "domain_not_allowed"
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_custom_allowed_domains(session: AsyncSession):
+    """Verify create_batch_and_jobs respects explicit allowed_domains argument if provided."""
+    from app.api.schemas import DocumentIngestItem
+    from app.services.repository import create_batch_and_jobs
+
+    items = [
+        DocumentIngestItem(url="https://custom.org/doc1", title="Custom 1"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/Doc2", title="Wiki 2"),
+    ]
+
+    batch, accepted, skipped = await create_batch_and_jobs(
+        session,
+        items,
+        allowed_domains=["https://custom.org"],
+    )
+
+    assert batch.total_count == 2
+    assert batch.accepted_count == 1
+    assert batch.skipped_count == 1
+    assert accepted[0][0].source_url == "https://custom.org/doc1"
+    assert skipped[0].url == "https://en.wikipedia.org/wiki/Doc2"
+    assert skipped[0].reason == "domain_not_allowed"

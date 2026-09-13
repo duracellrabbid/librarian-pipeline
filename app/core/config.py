@@ -1,9 +1,10 @@
 """Application configuration and environment settings management using Pydantic Settings."""
 
+import json
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +28,23 @@ class Settings(BaseSettings):
         ge=1,
         description="Maximum number of documents allowed per batch ingestion request",
     )
+    allowed_domains: list[str] = Field(
+        default_factory=lambda: ["https://en.wikipedia.org"],
+        description="List of allowed full-URL domain prefixes for document ingestion",
+    )
+
+    @field_validator("allowed_domains", mode="before")
+    @classmethod
+    def _parse_allowed_domains(cls, value: Any) -> list[str] | Any:
+        if isinstance(value, str):
+            value = value.strip()
+            if value.startswith("[") and value.endswith("]"):
+                try:
+                    return json.loads(value)
+                except Exception:
+                    pass
+            return [d.strip() for d in value.split(",") if d.strip()]
+        return value
 
     # PostgreSQL configuration
     postgres_user: str = Field(default="postgres", description="PostgreSQL user")

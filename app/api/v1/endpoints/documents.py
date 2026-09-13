@@ -58,6 +58,7 @@ async def ingest_document(
         session=session,
         items=payload.documents,
         source_type="url",
+        allowed_domains=app_settings.allowed_domains,
     )
 
     if accepted_pairs:

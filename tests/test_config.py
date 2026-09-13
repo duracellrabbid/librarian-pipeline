@@ -16,6 +16,7 @@ def test_default_settings():
     assert settings.ollama_base_url == "http://localhost:11434"
     assert settings.embedding_model == "bge-m3"
     assert settings.max_batch_ingest_size == 10
+    assert settings.allowed_domains == ["https://en.wikipedia.org"]
     assert settings.arq_job_timeout == 900
     assert settings.embedding_batch_size == 8
     assert settings.embedding_timeout == 120.0
@@ -54,6 +55,7 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("ARQ_JOB_TIMEOUT", "1200")
     monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "4")
     monkeypatch.setenv("EMBEDDING_TIMEOUT", "60.0")
+    monkeypatch.setenv("ALLOWED_DOMAINS", '["https://example.org"]')
 
     settings = Settings()
     assert settings.app_name == "custom-pipeline"
@@ -66,6 +68,7 @@ def test_env_override(monkeypatch):
     assert settings.arq_job_timeout == 1200
     assert settings.embedding_batch_size == 4
     assert settings.embedding_timeout == 60.0
+    assert settings.allowed_domains == ["https://example.org"]
 
 
 def test_invalid_port_validation(monkeypatch):
@@ -148,3 +151,18 @@ def test_invalid_new_settings_validation(monkeypatch):
     monkeypatch.setenv("EMBEDDING_TIMEOUT", "0")
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_parse_allowed_domains_formats():
+    """Verify string formats parse properly when supplied to Settings."""
+    from app.core.config import Settings
+
+    settings_json = Settings(allowed_domains='["https://site1.org", "https://site2.org"]')
+    assert settings_json.allowed_domains == ["https://site1.org", "https://site2.org"]
+
+    settings_csv = Settings(allowed_domains="https://site1.org, https://site2.org")
+    assert settings_csv.allowed_domains == ["https://site1.org", "https://site2.org"]
+
+    # Malformed JSON with bracket fallback
+    settings_malformed = Settings(allowed_domains="[not-valid-json]")
+    assert settings_malformed.allowed_domains == ["[not-valid-json]"]

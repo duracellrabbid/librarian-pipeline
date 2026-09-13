@@ -30,7 +30,7 @@ rag-ingestion-pipeline/
 │   │   └── v1/           # API version 1 router and endpoints
 │   │       └── endpoints/
 │   │           └── documents.py # Document ingestion, status, list, check, delete
-│   ├── core/         # Settings, logging (Loguru & intercept), database engine, dispatcher protocol
+│   ├── core/         # Settings, security & domain validation, logging, dispatcher protocol
 │   ├── models/       # SQLModel database tables and domain entities
 │   ├── services/     # Services: repository, extractors, chunkers, embeddings, vector_store, pipeline
 │   │   ├── chunkers/     # Context-aware HybridMarkdownChunker
@@ -118,7 +118,7 @@ stateDiagram-v2
 ### Repository Access Functions (`app.services.repository`)
 
 - `check_active_url(session, url)`: Lookup active non-deleted document by URL.
-- `create_batch_and_jobs(session, items)`: Atomically inspects document statuses, deduplicates URLs, records skipped items, and creates `BatchIngestionJob` along with child `Document` and `IngestionJob` records.
+- `create_batch_and_jobs(session, items, source_type="url", allowed_domains=None)`: Atomically validates domain allowlists, inspects document statuses, deduplicates URLs, records skipped items (`domain_not_allowed`, `duplicate_in_request`, etc.), and creates `BatchIngestionJob` along with child `Document` and `IngestionJob` records.
 - `get_batch_job_status(session, batch_id)`: Computes aggregate batch lifecycle state and progress percentage, returning all child job statuses and skipped reasons.
 - `create_document_and_job(session, source_type, source_url, title)`: Registers a document and creates its initial `PENDING` job, raising `DuplicateActiveURLError` on collision.
 - `update_job_status(session, job_id, status, progress_percentage, error_message)`: Transitions job status, tracks progress, and sets `finished_at` UTC timestamp upon reaching terminal states (`INDEXED` / `FAILED`).
