@@ -34,9 +34,7 @@ def upgrade() -> None:
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f("ix_batch_ingestion_jobs_status"), "batch_ingestion_jobs", ["status"], unique=False
-    )
+    op.create_index(op.f("ix_batch_ingestion_jobs_status"), "batch_ingestion_jobs", ["status"], unique=False)
 
     # 2. Add batch_id to ingestion_jobs with batch mode for SQLite support
     with op.batch_alter_table("ingestion_jobs") as batch_op:

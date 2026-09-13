@@ -51,9 +51,7 @@ async def ingest_document(
     if len(payload.documents) > max_limit:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Batch size {len(payload.documents)} exceeds maximum allowed limit of {max_limit}"
-            ),
+            detail=(f"Batch size {len(payload.documents)} exceeds maximum allowed limit of {max_limit}"),
         )
 
     batch, accepted_pairs, _ = await create_batch_and_jobs(
@@ -158,11 +156,7 @@ async def check_document_url(
     if doc is None:
         return DocumentCheckResponse(exists=False, doc_id=None, status=None)
 
-    statement = (
-        select(IngestionJob)
-        .where(IngestionJob.document_id == doc.id)
-        .order_by(IngestionJob.created_at.desc())
-    )
+    statement = select(IngestionJob).where(IngestionJob.document_id == doc.id).order_by(IngestionJob.created_at.desc())
     result = await session.execute(statement)
     latest_job = result.scalars().first()
     latest_status = latest_job.status if latest_job is not None else None

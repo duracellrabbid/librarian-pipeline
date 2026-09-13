@@ -18,8 +18,7 @@ DEFAULT_WIKIPEDIA_EXCLUDED_TAGS: list[str] = [
 ]
 
 DEFAULT_WIKIPEDIA_EXCLUDED_SELECTOR: str = (
-    ".vector-header, .vector-sidebar, #mw-navigation, "
-    ".reference, .reflist, .mw-editsection, .infobox, table.infobox"
+    ".vector-header, .vector-sidebar, #mw-navigation, .reference, .reflist, .mw-editsection, .infobox, table.infobox"
 )
 
 _FIRST_H1_PATTERN = re.compile(r"^#[ \t]+(\S.*)$", re.MULTILINE)
@@ -122,9 +121,7 @@ class Crawl4AIExtractor(BaseExtractor):
     def _resolve_title(res_metadata: dict[str, Any], content: str, source: str) -> str:
         """Resolve document title from metadata, first H1 heading, or URL fallback."""
         title: str | None = (
-            res_metadata.get("title")
-            or res_metadata.get("og:title")
-            or res_metadata.get("twitter:title")
+            res_metadata.get("title") or res_metadata.get("og:title") or res_metadata.get("twitter:title")
         )
         if title:
             return str(title)

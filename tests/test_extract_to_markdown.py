@@ -12,10 +12,7 @@ def test_derive_output_filename():
     """Test filename derivation from URL and title."""
     assert derive_output_filename("https://en.wikipedia.org/wiki/Ada_Lovelace") == "ada_lovelace.md"
     assert derive_output_filename("https://example.com/some/path/") == "path.md"
-    assert (
-        derive_output_filename("https://example.com", title="Hello World! - Page")
-        == "hello_world_page.md"
-    )
+    assert derive_output_filename("https://example.com", title="Hello World! - Page") == "hello_world_page.md"
 
 
 @pytest.mark.asyncio

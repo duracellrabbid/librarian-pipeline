@@ -40,9 +40,7 @@ def test_setup_logging_clears_handlers_and_adds_stdout(monkeypatch: pytest.Monke
     assert not dummy_sink_called
 
 
-def test_setup_logging_production_json(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_setup_logging_production_json(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify production environment outputs serialized JSON logs."""
     monkeypatch.setattr(settings, "environment", "production")
     monkeypatch.setattr(settings, "log_level", "INFO")
@@ -59,9 +57,7 @@ def test_setup_logging_production_json(
     assert log_data["record"]["extra"].get("job_id") == "test-job-42"
 
 
-def test_setup_logging_development_format(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_setup_logging_development_format(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify development environment outputs human-readable console format."""
     monkeypatch.setattr(settings, "environment", "development")
     monkeypatch.setattr(settings, "log_level", "DEBUG")
@@ -130,9 +126,7 @@ def test_intercept_handler_forwards_intercepted_loggers(
         assert f"message from {logger_name}" in captured.out
 
 
-def test_intercept_handler_unknown_level(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_intercept_handler_unknown_level(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify InterceptHandler handles unknown logging levels gracefully."""
     monkeypatch.setattr(settings, "environment", "development")
     setup_logging()
@@ -155,9 +149,7 @@ def test_intercept_handler_unknown_level(
     assert "message with unknown level" in captured.out
 
 
-def test_intercept_handler_no_frame(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_intercept_handler_no_frame(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify InterceptHandler gracefully handles scenarios where currentframe is None."""
     monkeypatch.setattr(settings, "environment", "development")
     setup_logging()

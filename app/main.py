@@ -29,9 +29,7 @@ async def request_id_middleware(
 ) -> Response:
     """Extract or generate X-Request-ID, bind to Loguru context, and set response header."""
     raw_request_id = request.headers.get("X-Request-ID")
-    request_id = (
-        raw_request_id.strip() if raw_request_id and raw_request_id.strip() else str(uuid.uuid4())
-    )
+    request_id = raw_request_id.strip() if raw_request_id and raw_request_id.strip() else str(uuid.uuid4())
     with logger.contextualize(request_id=request_id):
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id

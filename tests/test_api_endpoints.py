@@ -576,9 +576,7 @@ class TestDeleteEndpoint:
         self,
         client: AsyncClient,
     ) -> None:
-        response = await client.get(
-            "/api/v1/documents/check", params={"url": "https://notfound.com"}
-        )
+        response = await client.get("/api/v1/documents/check", params={"url": "https://notfound.com"})
         assert response.status_code == 200
 
 
@@ -595,9 +593,7 @@ class TestDirectHandlerInvocations:
         from app.api.v1.endpoints.documents import ingest_document
         from app.models import BatchJobStatus
 
-        req = IngestRequest(
-            documents=[{"url": "https://example.com/direct-ingest", "title": "Direct Title"}]
-        )
+        req = IngestRequest(documents=[{"url": "https://example.com/direct-ingest", "title": "Direct Title"}])
         resp = await ingest_document(req, async_session, mock_dispatcher)
         assert resp.status == BatchJobStatus.PENDING.value
         assert resp.accepted_count == 1

@@ -28,13 +28,9 @@ class OllamaEmbeddingClient:
         self.base_url = raw_base_url.rstrip("/")
         self.model = model or settings.embedding_model or "bge-m3"
         self.dimension = dimension
-        configured_batch_size = (
-            batch_size if batch_size is not None else getattr(settings, "embedding_batch_size", 8)
-        )
+        configured_batch_size = batch_size if batch_size is not None else getattr(settings, "embedding_batch_size", 8)
         self.batch_size = max(1, configured_batch_size)
-        configured_timeout = (
-            timeout if timeout is not None else getattr(settings, "embedding_timeout", 120.0)
-        )
+        configured_timeout = timeout if timeout is not None else getattr(settings, "embedding_timeout", 120.0)
         self.timeout = configured_timeout
         self.max_retries = max(0, max_retries)
         self.backoff_factor = max(0.0, backoff_factor)

@@ -43,6 +43,7 @@ See `proposal.md` for motivation. Currently, `app/api/v1/endpoints/documents.py`
          created_at: datetime
          updated_at: datetime
 
+
      class DocumentListResponse(BaseModel):
          total: int
          limit: int

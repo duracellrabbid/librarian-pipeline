@@ -204,9 +204,7 @@ async def test_pipeline_service_successful_end_to_end(
     # Verify component interactions
     mock_extractor.extract.assert_awaited_once_with(url)
     mock_chunker.chunk.assert_called_once()
-    mock_embedding_client.embed_batch.assert_awaited_once_with(
-        ["Sample Document This is test content."]
-    )
+    mock_embedding_client.embed_batch.assert_awaited_once_with(["Sample Document This is test content."])
     mock_vector_store.initialize_collection.assert_awaited_once()
     mock_vector_store.upsert_chunks.assert_awaited_once()
 
@@ -704,11 +702,7 @@ async def test_pipeline_service_failure_logs_exception_with_loguru(
     try:
         await service.run(job_id=job_id, document_id=doc_id, url=url)
 
-        err_log = next(
-            r
-            for r in captured_records
-            if f"Ingestion pipeline failed for job {job_id}:" in r["message"]
-        )
+        err_log = next(r for r in captured_records if f"Ingestion pipeline failed for job {job_id}:" in r["message"])
         assert err_log["extra"].get("job_id") == str(job_id)
         assert err_log["extra"].get("document_id") == str(doc_id)
         assert err_log["exception"] is not None
@@ -760,9 +754,7 @@ async def test_pipeline_service_timeout_logs_warning_with_loguru(
             await service.run(job_id=job_id, document_id=doc_id, url=url)
 
         warn_log = next(
-            r
-            for r in captured_records
-            if f"Ingestion pipeline cancelled or timed out for job {job_id}" in r["message"]
+            r for r in captured_records if f"Ingestion pipeline cancelled or timed out for job {job_id}" in r["message"]
         )
         assert warn_log["extra"].get("job_id") == str(job_id)
         assert warn_log["extra"].get("document_id") == str(doc_id)

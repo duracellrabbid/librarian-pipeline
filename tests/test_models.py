@@ -136,9 +136,7 @@ def test_document_table_name_and_partial_index():
 
     # Check table args contains partial index
     indices = [arg for arg in Document.__table_args__ if isinstance(arg, Index)]
-    partial_index = next(
-        (idx for idx in indices if idx.name == "uq_documents_active_source_url"), None
-    )
+    partial_index = next((idx for idx in indices if idx.name == "uq_documents_active_source_url"), None)
     assert partial_index is not None
     assert partial_index.unique is True
     col_names = [col.name if hasattr(col, "name") else str(col) for col in partial_index.columns]

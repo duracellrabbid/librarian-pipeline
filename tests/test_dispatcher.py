@@ -92,9 +92,7 @@ async def test_arq_task_dispatcher_enqueue_success() -> None:
 async def test_arq_task_dispatcher_lazy_pool_creation() -> None:
     """Test that ArqTaskDispatcher lazily initializes the pool if not provided."""
     mock_pool = AsyncMock()
-    with patch(
-        "app.workers.dispatcher.create_pool", AsyncMock(return_value=mock_pool)
-    ) as mock_create_pool:
+    with patch("app.workers.dispatcher.create_pool", AsyncMock(return_value=mock_pool)) as mock_create_pool:
         dispatcher = ArqTaskDispatcher()
         job_id = uuid4()
         doc_id = uuid4()
@@ -141,9 +139,7 @@ async def test_arq_task_dispatcher_pool_creation_failure_raises_dispatcher_error
         doc_id = uuid4()
 
         with pytest.raises(DispatcherError) as exc_info:
-            await dispatcher.enqueue_ingestion_job(
-                job_id=job_id, document_id=doc_id, url="https://example.com"
-            )
+            await dispatcher.enqueue_ingestion_job(job_id=job_id, document_id=doc_id, url="https://example.com")
 
         err = exc_info.value
         assert "Redis down" in str(err)
@@ -387,9 +383,7 @@ async def test_run_ingestion_pipeline_fallback_warning_contextualized() -> None:
             ctx: dict[str, object] = {}
             await run_ingestion_pipeline(ctx, job_id, doc_id, "https://example.com")
 
-        log = next(
-            r for r in captured_records if "IngestionPipelineService not available" in r["message"]
-        )
+        log = next(r for r in captured_records if "IngestionPipelineService not available" in r["message"])
         assert f"skipping pipeline run for job {job_id}" in log["message"]
         assert log["extra"].get("job_id") == str(job_id)
         assert log["extra"].get("document_id") == str(doc_id)
@@ -435,9 +429,7 @@ async def test_worker_startup_vector_store_error_logs_warning_with_loguru() -> N
             await startup(ctx)
 
         warning_logs = [
-            r
-            for r in captured_records
-            if "Could not initialize Qdrant vector store in worker startup" in r["message"]
+            r for r in captured_records if "Could not initialize Qdrant vector store in worker startup" in r["message"]
         ]
         assert len(warning_logs) == 1
         assert "Qdrant connection lost" in warning_logs[0]["message"]

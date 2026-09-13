@@ -98,9 +98,7 @@ class SkippedDocumentItem(BaseModel):
 
     url: str = Field(description="Source URL of the skipped document")
     reason: str = Field(
-        description=(
-            "Reason for skipping, e.g. duplicate_in_request, already_ingested, currently_ingesting"
-        ),
+        description=("Reason for skipping, e.g. duplicate_in_request, already_ingested, currently_ingesting"),
     )
 
     existing_doc_id: UUID | None = Field(

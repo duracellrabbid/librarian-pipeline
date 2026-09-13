@@ -132,10 +132,7 @@ class TestLifespan:
 
                 mock_vector_store.initialize_collection.assert_awaited_once()
                 mock_vector_store.close.assert_awaited_once()
-                assert any(
-                    "failed to initialize qdrant collection" in msg.lower()
-                    for msg in captured_messages
-                )
+                assert any("failed to initialize qdrant collection" in msg.lower() for msg in captured_messages)
         finally:
             logger.remove(sink_id)
 
@@ -303,11 +300,7 @@ class TestRequestIdMiddleware:
                 assert resp.status_code == 200
                 assert resp.headers.get("X-Request-ID") == custom_id
 
-            matching = [
-                rec
-                for rec in captured_records
-                if rec["message"] == "Inside test log context endpoint"
-            ]
+            matching = [rec for rec in captured_records if rec["message"] == "Inside test log context endpoint"]
             assert len(matching) == 1
             assert matching[0]["extra"].get("request_id") == custom_id
         finally:

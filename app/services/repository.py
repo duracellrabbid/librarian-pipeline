@@ -80,11 +80,7 @@ async def _inspect_single_url_status(
     if doc is None:
         return "accept_new", None
 
-    statement = (
-        select(IngestionJob)
-        .where(IngestionJob.document_id == doc.id)
-        .order_by(IngestionJob.created_at.desc())
-    )
+    statement = select(IngestionJob).where(IngestionJob.document_id == doc.id).order_by(IngestionJob.created_at.desc())
     result = await session.execute(statement)
     latest_job = result.scalars().first()
 
@@ -340,10 +336,7 @@ async def update_job_status(
         job.error_message = error_message
 
     # Transitioning to terminal states sets finished_at if not already set
-    if (
-        status_value in (JobStatus.INDEXED.value, JobStatus.FAILED.value)
-        and job.finished_at is None
-    ):
+    if status_value in (JobStatus.INDEXED.value, JobStatus.FAILED.value) and job.finished_at is None:
         job.finished_at = datetime.now(UTC)
 
     await session.commit()
@@ -458,13 +451,7 @@ async def list_indexed_documents(
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 
-    data_stmt = (
-        select(Document)
-        .where(*filters)
-        .order_by(Document.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+    data_stmt = select(Document).where(*filters).order_by(Document.created_at.desc()).limit(limit).offset(offset)
     result = await session.execute(data_stmt)
     documents = result.scalars().all()
 

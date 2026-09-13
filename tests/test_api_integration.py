@@ -92,9 +92,7 @@ class TestCompleteDocumentLifecycle:
         target_url = "https://en.wikipedia.org/wiki/Retrieval-augmented_generation"
 
         # 1. Verify existence returns false before ingestion
-        check_resp = await integration_client.get(
-            "/api/v1/documents/check", params={"url": target_url}
-        )
+        check_resp = await integration_client.get("/api/v1/documents/check", params={"url": target_url})
         assert check_resp.status_code == 200
         check_data = check_resp.json()
         assert check_data["exists"] is False
@@ -127,9 +125,7 @@ class TestCompleteDocumentLifecycle:
         assert status_data["jobs"][0]["status"] == JobStatus.PENDING.value
 
         # 3. Verify existence now returns true with status PENDING
-        check_resp2 = await integration_client.get(
-            "/api/v1/documents/check", params={"url": target_url}
-        )
+        check_resp2 = await integration_client.get("/api/v1/documents/check", params={"url": target_url})
         assert check_resp2.status_code == 200
         check_data2 = check_resp2.json()
         assert check_data2["exists"] is True
@@ -172,9 +168,7 @@ class TestCompleteDocumentLifecycle:
         mock_vector_store.delete_by_doc_id.assert_awaited_once_with(doc_id)
 
         # 7. Verify existence returns false after soft-deletion
-        check_resp3 = await integration_client.get(
-            "/api/v1/documents/check", params={"url": target_url}
-        )
+        check_resp3 = await integration_client.get("/api/v1/documents/check", params={"url": target_url})
         assert check_resp3.status_code == 200
         assert check_resp3.json()["exists"] is False
 

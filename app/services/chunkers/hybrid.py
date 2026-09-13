@@ -162,17 +162,13 @@ def _compute_overlap(
     overlap_pieces: list[str] = []
     overlap_len = 0
     for past_piece in reversed(accumulator):
-        candidate_len = (
-            overlap_len + len(separator) + len(past_piece) if overlap_pieces else len(past_piece)
-        )
+        candidate_len = overlap_len + len(separator) + len(past_piece) if overlap_pieces else len(past_piece)
         if candidate_len > chunk_overlap:
             break
         overlap_pieces.insert(0, past_piece)
         overlap_len = candidate_len
 
-    while overlap_pieces and (
-        len(separator.join(overlap_pieces)) + len(separator) + len(new_piece) > max_chunk_size
-    ):
+    while overlap_pieces and (len(separator.join(overlap_pieces)) + len(separator) + len(new_piece) > max_chunk_size):
         overlap_pieces.pop(0)
 
     return overlap_pieces
@@ -201,9 +197,7 @@ def _merge_pieces(
             if merged:
                 chunks.append(merged)
 
-        overlap_pieces = _compute_overlap(
-            accumulator, separator, chunk_overlap, piece, max_chunk_size
-        )
+        overlap_pieces = _compute_overlap(accumulator, separator, chunk_overlap, piece, max_chunk_size)
         accumulator = [*overlap_pieces, piece]
         current_length = len(separator.join(accumulator))
 
@@ -245,9 +239,7 @@ def recursive_split_text(
         return [text[i : i + max_chunk_size] for i in range(0, len(text), step)]
 
     splits = text.split(chosen_separator)
-    refined_pieces = _refine_splits(
-        splits, separator_index, active_separators, max_chunk_size, chunk_overlap
-    )
+    refined_pieces = _refine_splits(splits, separator_index, active_separators, max_chunk_size, chunk_overlap)
     return _merge_pieces(refined_pieces, chosen_separator, max_chunk_size, chunk_overlap)
 
 
@@ -340,11 +332,7 @@ class HybridMarkdownChunker(BaseChunker):
             return []
 
         breadcrumb = " > ".join(section.heading_path) if section.heading_path else ""
-        prefix = (
-            self.breadcrumb_prefix.format(breadcrumb=breadcrumb)
-            if self.inject_breadcrumbs and breadcrumb
-            else ""
-        )
+        prefix = self.breadcrumb_prefix.format(breadcrumb=breadcrumb) if self.inject_breadcrumbs and breadcrumb else ""
         section_meta: dict[str, Any] = {
             **base_meta,
             "heading_path": list(section.heading_path),

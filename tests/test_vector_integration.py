@@ -232,9 +232,7 @@ async def test_end_to_end_chunk_embed_and_vector_store_pipeline():
     assert top_hit.payload["source_url"] == source_url
 
     # Verify deterministic UUID formatting
-    expected_uuid = str(
-        uuid.uuid5(uuid.NAMESPACE_DNS, f"{doc_id}:{top_hit.payload['chunk_index']}")
-    )
+    expected_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{doc_id}:{top_hit.payload['chunk_index']}"))
     assert top_hit.point_id == expected_uuid
 
     # 6. Cascade delete by doc_id
@@ -260,10 +258,7 @@ async def test_live_vector_pipeline_if_available():
     qdrant_ok = check_tcp_port(settings.qdrant_host, settings.qdrant_port)
 
     if not (ollama_ok and qdrant_ok):
-        pytest.skip(
-            f"Live services unreachable (Ollama: {ollama_ok}, Qdrant: {qdrant_ok}). "
-            "Skipping live test."
-        )
+        pytest.skip(f"Live services unreachable (Ollama: {ollama_ok}, Qdrant: {qdrant_ok}). Skipping live test.")
 
     # Live execution if services are online
     test_doc_id = f"test-live-{uuid.uuid4().hex[:8]}"
@@ -279,9 +274,7 @@ async def test_live_vector_pipeline_if_available():
         await vector_store.initialize_collection()
         try:
             await vector_store.upsert_chunks(doc_id=test_doc_id, chunks=chunks, vectors=vectors)
-            results = await vector_store.search(
-                query_vector=vectors[0], limit=1, doc_id=test_doc_id
-            )
+            results = await vector_store.search(query_vector=vectors[0], limit=1, doc_id=test_doc_id)
             assert len(results) == 1
             assert results[0].payload["doc_id"] == test_doc_id
         finally:

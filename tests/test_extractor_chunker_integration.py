@@ -103,10 +103,7 @@ async def test_extractor_to_chunker_pipeline_integration():
         "Career and contributions",
         "First computer program",
     ]
-    assert (
-        "[Context: Ada Lovelace > Career and contributions > First computer program]"
-        in h3_chunks[0].text
-    )
+    assert "[Context: Ada Lovelace > Career and contributions > First computer program]" in h3_chunks[0].text
     assert "Bernoulli numbers" in h3_chunks[0].text
 
     legacy_chunks = [c for c in chunks if "Legacy" in c.metadata["heading_path"]]

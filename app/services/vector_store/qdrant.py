@@ -98,8 +98,7 @@ class QdrantVectorStore:
             return 0
 
         points = [
-            self._build_point(doc_id, chunk, vector, source_url)
-            for chunk, vector in zip(chunks, vectors, strict=True)
+            self._build_point(doc_id, chunk, vector, source_url) for chunk, vector in zip(chunks, vectors, strict=True)
         ]
 
         client = await self.get_client()
@@ -210,8 +209,7 @@ class QdrantVectorStore:
         """Search nearest points using query vector."""
         if len(query_vector) != self.dimension:
             raise VectorStoreError(
-                f"Query vector dimension mismatch: expected {self.dimension}, "
-                f"got {len(query_vector)}",
+                f"Query vector dimension mismatch: expected {self.dimension}, got {len(query_vector)}",
                 collection_name=self.collection_name,
             )
 

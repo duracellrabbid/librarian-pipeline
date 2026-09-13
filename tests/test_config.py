@@ -33,13 +33,8 @@ def test_derived_connection_urls():
         qdrant_url=None,
         ollama_base_url=None,
     )
-    assert (
-        settings.database_url
-        == "postgresql+asyncpg://postgres:postgres@localhost:5432/rag_pipeline"
-    )
-    assert (
-        settings.sync_database_url == "postgresql://postgres:postgres@localhost:5432/rag_pipeline"
-    )
+    assert settings.database_url == "postgresql+asyncpg://postgres:postgres@localhost:5432/rag_pipeline"
+    assert settings.sync_database_url == "postgresql://postgres:postgres@localhost:5432/rag_pipeline"
     assert settings.redis_url == "redis://localhost:6379/0"
     assert settings.qdrant_url == "http://localhost:6333"
     assert settings.ollama_base_url == "http://localhost:11434"
