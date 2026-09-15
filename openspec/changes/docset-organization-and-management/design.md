@@ -63,9 +63,7 @@ def normalize_docset_name(raw: str) -> str:
 - Initialize a `PayloadSchemaType.KEYWORD` index on `docset` during `initialize_collection()`.
 - Add `delete_by_docset(docset: str) -> int` using Qdrant's filter selector:
   ```python
-  points_selector = models.Filter(
-      must=[models.FieldCondition(key="docset", match=models.MatchValue(value=docset))]
-  )
+  points_selector = models.Filter(must=[models.FieldCondition(key="docset", match=models.MatchValue(value=docset))])
   ```
 - Support `docset: str | None = None` in `search()` query filter.
 

@@ -1,13 +1,14 @@
 """Document entity model representing ingested sources."""
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Index, text
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
+    from app.models.docset import Docset
     from app.models.job import IngestionJob
 
 
@@ -22,7 +23,8 @@ class Document(SQLModel, table=True):
     __tablename__ = "documents"
     __table_args__ = (
         Index(
-            "uq_documents_active_source_url",
+            "uq_documents_active_docset_source_url",
+            "docset",
             "source_url",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
@@ -31,6 +33,13 @@ class Document(SQLModel, table=True):
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
+    docset: str = Field(
+        default="default",
+        index=True,
+        nullable=False,
+        foreign_key="docsets.name",
+        description="Docset identifier",
+    )
     source_type: str = Field(nullable=False, description="Source type, e.g. url, pdf, text")
     source_url: str = Field(index=True, nullable=False, description="Source URL or path")
     content_hash: str | None = Field(default=None, description="Content hash for deduplication")
@@ -51,6 +60,10 @@ class Document(SQLModel, table=True):
         sa_type=DateTime(timezone=True),
         index=True,
         nullable=True,
+    )
+
+    docset_rel: Optional["Docset"] = Relationship(
+        back_populates="documents",
     )
 
     jobs: list["IngestionJob"] = Relationship(

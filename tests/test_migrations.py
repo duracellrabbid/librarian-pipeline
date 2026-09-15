@@ -40,10 +40,20 @@ def test_alembic_upgrade_and_downgrade_cycle(alembic_cfg: Config, temp_db_path: 
         assert "documents" in tables
         assert "ingestion_jobs" in tables
         assert "batch_ingestion_jobs" in tables
+        assert "docsets" in tables
+
+        # Verify docsets columns
+        docset_cols = {col["name"]: col for col in inspector.get_columns("docsets")}
+        assert "name" in docset_cols
+        assert "document_count" in docset_cols
+        assert "created_at" in docset_cols
+        assert "updated_at" in docset_cols
+        assert "deleted_at" in docset_cols
 
         # Verify documents columns
         doc_cols = {col["name"]: col for col in inspector.get_columns("documents")}
         assert "id" in doc_cols
+        assert "docset" in doc_cols
         assert "source_type" in doc_cols
         assert "source_url" in doc_cols
         assert "chunk_count" in doc_cols
@@ -76,14 +86,19 @@ def test_alembic_upgrade_and_downgrade_cycle(alembic_cfg: Config, temp_db_path: 
         assert "documents" in referred_tables
         assert "batch_ingestion_jobs" in referred_tables
 
+        doc_fks = inspector.get_foreign_keys("documents")
+        doc_referred_tables = {fk["referred_table"] for fk in doc_fks}
+        assert "docsets" in doc_referred_tables
+
         # Verify partial unique index
         doc_indices = inspector.get_indexes("documents")
         partial_idx = next(
-            (idx for idx in doc_indices if idx["name"] == "uq_documents_active_source_url"),
+            (idx for idx in doc_indices if idx["name"] == "uq_documents_active_docset_source_url"),
             None,
         )
         assert partial_idx is not None
         assert bool(partial_idx["unique"]) is True
+        assert "docset" in partial_idx["column_names"]
         assert "source_url" in partial_idx["column_names"]
 
     finally:
@@ -96,6 +111,7 @@ def test_alembic_upgrade_and_downgrade_cycle(alembic_cfg: Config, temp_db_path: 
     try:
         inspector = inspect(sync_engine)
         remaining_tables = inspector.get_table_names()
+        assert "docsets" not in remaining_tables
         assert "documents" not in remaining_tables
         assert "ingestion_jobs" not in remaining_tables
         assert "batch_ingestion_jobs" not in remaining_tables

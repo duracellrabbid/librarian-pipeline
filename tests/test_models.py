@@ -1,6 +1,6 @@
 """Unit and persistence tests for SQLModel entities: Document and IngestionJob."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -136,10 +136,11 @@ def test_document_table_name_and_partial_index():
 
     # Check table args contains partial index
     indices = [arg for arg in Document.__table_args__ if isinstance(arg, Index)]
-    partial_index = next((idx for idx in indices if idx.name == "uq_documents_active_source_url"), None)
+    partial_index = next((idx for idx in indices if idx.name == "uq_documents_active_docset_source_url"), None)
     assert partial_index is not None
     assert partial_index.unique is True
     col_names = [col.name if hasattr(col, "name") else str(col) for col in partial_index.columns]
+    assert "docset" in col_names
     assert "source_url" in col_names
     where_clause = str(partial_index.dialect_options.get("postgresql", {}).get("where", ""))
     assert "deleted_at IS NULL" in where_clause
@@ -382,3 +383,171 @@ async def test_postgres_datetime_persistence_if_available():
         await session.rollback()
 
     await engine.dispose()
+
+
+def test_docset_instantiation_defaults():
+    """Verify Docset initializes with expected default fields."""
+    from app.models import Docset
+
+    docset = Docset(name="python-docs")
+
+    assert docset.name == "python-docs"
+    assert docset.document_count == 0
+    assert isinstance(docset.created_at, datetime)
+    assert isinstance(docset.updated_at, datetime)
+    assert docset.deleted_at is None
+
+
+def test_docset_explicit_fields():
+    """Verify Docset correctly assigns explicitly provided fields."""
+    from app.models import Docset
+
+    now = datetime.now(UTC)
+    docset = Docset(
+        name="custom-set",
+        document_count=42,
+        created_at=now,
+        updated_at=now,
+        deleted_at=now,
+    )
+
+    assert docset.name == "custom-set"
+    assert docset.document_count == 42
+    assert docset.created_at == now
+    assert docset.updated_at == now
+    assert docset.deleted_at == now
+
+
+def test_docset_datetime_columns_have_timezone_aware_types():
+    """Verify that Docset datetime columns are configured with timezone=True."""
+    from app.models import Docset
+
+    assert Docset.__table__.c.created_at.type.timezone is True
+    assert Docset.__table__.c.updated_at.type.timezone is True
+    assert Docset.__table__.c.deleted_at.type.timezone is True
+
+
+def test_document_docset_field_default_and_explicit():
+    """Verify Document model supports default and explicit docset identifiers."""
+    from app.models import Document
+
+    doc_default = Document(source_type="url", source_url="https://example.com/default")
+    assert doc_default.docset == "default"
+
+    doc_explicit = Document(
+        source_type="url",
+        source_url="https://example.com/explicit",
+        docset="my-docset",
+    )
+    assert doc_explicit.docset == "my-docset"
+
+
+def test_docset_and_document_relationship_in_memory():
+    """Verify bidirectional relationship between Docset and Document in memory."""
+    from app.models import Docset, Document
+
+    docset = Docset(name="ai-papers")
+    doc = Document(
+        source_type="url",
+        source_url="https://example.com/paper",
+        docset_rel=docset,
+    )
+
+    assert doc.docset_rel is docset
+    assert docset.documents == [doc]
+
+
+@pytest.mark.asyncio
+async def test_docset_and_documents_persistence_and_relationship():
+    """Verify relational persistence between Docset and Document in database."""
+    from app.models import Docset, Document
+
+    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with test_engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    test_session_factory = async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async with test_session_factory() as session:
+        docset = Docset(name="ai-papers", document_count=1)
+        doc = Document(
+            source_type="url",
+            source_url="https://example.com/paper",
+            docset="ai-papers",
+        )
+        session.add(docset)
+        session.add(doc)
+        await session.commit()
+
+    async with test_session_factory() as session:
+        query = select(Docset).where(Docset.name == "ai-papers")
+        result = await session.execute(query)
+        stored_docset = result.scalar_one()
+        assert stored_docset.name == "ai-papers"
+        assert stored_docset.document_count == 1
+
+        doc_query = select(Document).where(Document.docset == "ai-papers")
+        doc_result = await session.execute(doc_query)
+        stored_doc = doc_result.scalar_one()
+        assert stored_doc.source_url == "https://example.com/paper"
+        assert stored_doc.docset == "ai-papers"
+
+    await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_composite_unique_index_docset_and_source_url():
+    """Verify that uniqueness is scoped to (docset, source_url) for active documents."""
+    from app.models import Docset, Document
+    from sqlalchemy.exc import IntegrityError
+
+    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with test_engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    test_session_factory = async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    # 1. Same source_url across different docsets should succeed
+    async with test_session_factory() as session:
+        session.add_all(
+            [
+                Docset(name="set-a"),
+                Docset(name="set-b"),
+                Document(source_type="url", source_url="https://example.com/shared", docset="set-a"),
+                Document(source_type="url", source_url="https://example.com/shared", docset="set-b"),
+            ]
+        )
+        await session.commit()
+
+    # 2. Duplicate active (docset, source_url) in the same docset must fail
+    async with test_session_factory() as session:
+        duplicate = Document(source_type="url", source_url="https://example.com/shared", docset="set-a")
+        session.add(duplicate)
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+    # 3. Soft-deleted duplicate permits re-insertion of the same URL in the same docset
+    async with test_session_factory() as session:
+        query = select(Document).where(
+            Document.docset == "set-a",
+            Document.source_url == "https://example.com/shared",
+        )
+        res = await session.execute(query)
+        doc_a = res.scalar_one()
+        doc_a.deleted_at = datetime.now(UTC)
+        await session.commit()
+
+    async with test_session_factory() as session:
+        new_doc = Document(source_type="url", source_url="https://example.com/shared", docset="set-a")
+        session.add(new_doc)
+        await session.commit()
+
+    await test_engine.dispose()

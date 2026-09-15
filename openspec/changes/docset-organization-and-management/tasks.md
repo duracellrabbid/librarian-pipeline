@@ -1,9 +1,10 @@
 ## 1. Data Models & Database Migration
 
-- [ ] 1.1 Create `Docset` SQLModel entity in `app/models/docset.py` with `name`, `document_count`, `created_at`, `updated_at`, and `deleted_at`.
-- [ ] 1.2 Update `Document` SQLModel in `app/models/document.py` to include `docset` column and composite unique index on `(docset, source_url)` where `deleted_at IS NULL`.
-- [ ] 1.3 Create Alembic migration script creating `docsets` table, seeding the protected `"default"` docset, populating existing documents, and updating unique constraints.
-- [ ] 1.4 Add unit tests for `Docset` model and updated `Document` model behavior in `tests/test_models.py`.
+- [x] 1.1 Create `Docset` SQLModel entity in `app/models/docset.py` with `name`, `document_count`, `created_at`, `updated_at`, and `deleted_at`.
+- [x] 1.2 Update `Document` SQLModel in `app/models/document.py` to include `docset` column and composite unique index on `(docset, source_url)` where `deleted_at IS NULL`.
+- [x] 1.3 Create Alembic migration script creating `docsets` table, seeding the protected `"default"` docset, populating existing documents, and updating unique constraints.
+- [x] 1.4 Add unit tests for `Docset` model and updated `Document` model behavior in `tests/test_models.py`.
+
 
 ## 2. Qdrant Vector Storage Enhancements
 
