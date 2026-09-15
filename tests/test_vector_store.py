@@ -55,10 +55,14 @@ def test_base_vector_store_protocol_conformance() -> None:
             chunks: list[DocumentChunk],
             vectors: list[list[float]],
             source_url: str | None = None,
+            docset: str = "default",
         ) -> int:
             return len(chunks)
 
         async def delete_by_doc_id(self, doc_id: str) -> int:
+            return 1
+
+        async def delete_by_docset(self, docset: str) -> int:
             return 1
 
         async def search(
@@ -66,6 +70,7 @@ def test_base_vector_store_protocol_conformance() -> None:
             query_vector: list[float],
             limit: int = 5,
             doc_id: str | None = None,
+            docset: str | None = None,
             score_threshold: float | None = None,
         ) -> list[VectorSearchResult]:
             return []
@@ -156,7 +161,7 @@ async def test_qdrant_store_owns_client_close() -> None:
 @pytest.mark.asyncio
 async def test_initialize_collection_when_not_exists() -> None:
     """Test initialize_collection creates collection and payload index when missing."""
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock, MagicMock, call
 
     from app.services.vector_store.qdrant import QdrantVectorStore
     from qdrant_client import AsyncQdrantClient, models
@@ -177,10 +182,20 @@ async def test_initialize_collection_when_not_exists() -> None:
             distance=models.Distance.COSINE,
         ),
     )
-    mock_client.create_payload_index.assert_awaited_once_with(
-        collection_name="knowledge_base",
-        field_name="doc_id",
-        field_schema=models.PayloadSchemaType.KEYWORD,
+    assert mock_client.create_payload_index.await_count == 2
+    mock_client.create_payload_index.assert_has_awaits(
+        [
+            call(
+                collection_name="knowledge_base",
+                field_name="doc_id",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            ),
+            call(
+                collection_name="knowledge_base",
+                field_name="docset",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            ),
+        ]
     )
 
 
@@ -195,7 +210,7 @@ async def test_initialize_collection_when_already_exists() -> None:
     mock_client = AsyncMock(spec=AsyncQdrantClient)
     mock_client.collection_exists.return_value = True
     mock_info = MagicMock()
-    mock_info.payload_schema = {"doc_id": MagicMock()}
+    mock_info.payload_schema = {"doc_id": MagicMock(), "docset": MagicMock()}
     mock_client.get_collection.return_value = mock_info
 
     store = QdrantVectorStore(client=mock_client)
@@ -518,3 +533,191 @@ async def test_search_client_error_raises_vector_store_error() -> None:
 
     with pytest.raises(VectorStoreError, match="Vector search failed"):
         await store.search(query_vector=[0.1] * 1024)
+
+
+@pytest.mark.asyncio
+async def test_initialize_collection_creates_docset_index_when_missing() -> None:
+    """Test initialize_collection creates keyword index on docset if missing."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.vector_store.qdrant import QdrantVectorStore
+    from qdrant_client import AsyncQdrantClient, models
+
+    mock_client = AsyncMock(spec=AsyncQdrantClient)
+    mock_client.collection_exists.return_value = True
+
+    mock_info = MagicMock()
+    mock_info.payload_schema = {"doc_id": MagicMock()}  # docset is missing
+    mock_client.get_collection.return_value = mock_info
+
+    store = QdrantVectorStore(client=mock_client)
+    await store.initialize_collection()
+
+    mock_client.create_payload_index.assert_awaited_once_with(
+        collection_name="knowledge_base",
+        field_name="docset",
+        field_schema=models.PayloadSchemaType.KEYWORD,
+    )
+
+
+@pytest.mark.asyncio
+async def test_initialize_collection_skips_docset_index_when_present() -> None:
+    """Test initialize_collection skips index creation when doc_id and docset exist."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.vector_store.qdrant import QdrantVectorStore
+    from qdrant_client import AsyncQdrantClient
+
+    mock_client = AsyncMock(spec=AsyncQdrantClient)
+    mock_client.collection_exists.return_value = True
+
+    mock_info = MagicMock()
+    mock_info.payload_schema = {"doc_id": MagicMock(), "docset": MagicMock()}
+    mock_client.get_collection.return_value = mock_info
+
+    store = QdrantVectorStore(client=mock_client)
+    await store.initialize_collection()
+
+    mock_client.create_payload_index.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_upsert_chunks_attaches_docset_in_payload() -> None:
+    """Test upsert_chunks attaches docset field in point payloads."""
+    from unittest.mock import AsyncMock
+
+    from app.services.chunkers.base import DocumentChunk
+    from app.services.vector_store.qdrant import QdrantVectorStore
+    from qdrant_client import AsyncQdrantClient
+
+    mock_client = AsyncMock(spec=AsyncQdrantClient)
+    store = QdrantVectorStore(client=mock_client)
+
+    chunk = DocumentChunk(
+        text="Sample chunk content",
+        chunk_index=0,
+        char_count=20,
+        token_count=5,
+        metadata={"heading_path": ["Intro"]},
+    )
+
+    # 1. Default docset is 'default'
+    await store.upsert_chunks(
+        doc_id="doc-123",
+        chunks=[chunk],
+        vectors=[[0.1] * 1024],
+        source_url="https://example.com",
+    )
+    call_kwargs = mock_client.upsert.call_args.kwargs
+    point = call_kwargs["points"][0]
+    assert point.payload["docset"] == "default"
+
+    # 2. Explicit docset is passed
+    await store.upsert_chunks(
+        doc_id="doc-123",
+        chunks=[chunk],
+        vectors=[[0.1] * 1024],
+        source_url="https://example.com",
+        docset="custom-docset",
+    )
+    call_kwargs2 = mock_client.upsert.call_args.kwargs
+    point2 = call_kwargs2["points"][0]
+    assert point2.payload["docset"] == "custom-docset"
+
+
+@pytest.mark.asyncio
+async def test_delete_by_docset_success() -> None:
+    """Test delete_by_docset constructs Qdrant filter and calls delete."""
+    from unittest.mock import AsyncMock
+
+    from app.services.vector_store.qdrant import QdrantVectorStore
+    from qdrant_client import AsyncQdrantClient, models
+
+    mock_client = AsyncMock(spec=AsyncQdrantClient)
+    store = QdrantVectorStore(client=mock_client)
+
+    result = await store.delete_by_docset("python-docs")
+    assert result == 1
+
+    mock_client.delete.assert_awaited_once()
+    call_kwargs = mock_client.delete.call_args.kwargs
+    assert call_kwargs["collection_name"] == "knowledge_base"
+    assert call_kwargs["wait"] is True
+    points_selector = call_kwargs["points_selector"]
+    assert isinstance(points_selector, models.Filter)
+    assert len(points_selector.must) == 1
+    assert points_selector.must[0].key == "docset"
+    assert points_selector.must[0].match.value == "python-docs"
+
+
+@pytest.mark.asyncio
+async def test_delete_by_docset_validation_errors() -> None:
+    """Test delete_by_docset raises VectorStoreError on empty docset identifier."""
+    from app.core.exceptions import VectorStoreError
+    from app.services.vector_store.qdrant import QdrantVectorStore
+
+    store = QdrantVectorStore()
+    with pytest.raises(VectorStoreError, match="docset cannot be empty"):
+        await store.delete_by_docset("")
+
+    with pytest.raises(VectorStoreError, match="docset cannot be empty"):
+        await store.delete_by_docset("   ")
+
+
+@pytest.mark.asyncio
+async def test_delete_by_docset_client_error_raises() -> None:
+    """Test delete_by_docset wraps Qdrant client errors in VectorStoreError."""
+    from unittest.mock import AsyncMock
+
+    from app.core.exceptions import VectorStoreError
+    from app.services.vector_store.qdrant import QdrantVectorStore
+    from qdrant_client import AsyncQdrantClient
+
+    mock_client = AsyncMock(spec=AsyncQdrantClient)
+    mock_client.delete.side_effect = RuntimeError("Qdrant connection dropped")
+    store = QdrantVectorStore(client=mock_client)
+
+    with pytest.raises(VectorStoreError, match="Failed to delete points for docset 'legal-docs'"):
+        await store.delete_by_docset("legal-docs")
+
+
+@pytest.mark.asyncio
+async def test_search_with_docset_filter() -> None:
+    """Test search applies docset filter when provided."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.vector_store.qdrant import QdrantVectorStore
+    from qdrant_client import AsyncQdrantClient, models
+
+    mock_client = AsyncMock(spec=AsyncQdrantClient)
+    mock_response = MagicMock()
+    mock_response.points = []
+    mock_client.query_points.return_value = mock_response
+
+    store = QdrantVectorStore(client=mock_client)
+
+    # 1. Search with only docset filter
+    await store.search(
+        query_vector=[0.05] * 1024,
+        limit=5,
+        docset="research-papers",
+    )
+    call_kwargs = mock_client.query_points.call_args.kwargs
+    query_filter = call_kwargs["query_filter"]
+    assert isinstance(query_filter, models.Filter)
+    assert len(query_filter.must) == 1
+    assert query_filter.must[0].key == "docset"
+    assert query_filter.must[0].match.value == "research-papers"
+
+    # 2. Search with both doc_id and docset filter
+    await store.search(
+        query_vector=[0.05] * 1024,
+        limit=5,
+        doc_id="doc-456",
+        docset="research-papers",
+    )
+    call_kwargs2 = mock_client.query_points.call_args.kwargs
+    query_filter2 = call_kwargs2["query_filter"]
+    assert len(query_filter2.must) == 2
+    keys = {cond.key for cond in query_filter2.must}
+    assert keys == {"doc_id", "docset"}

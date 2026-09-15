@@ -8,11 +8,12 @@
 
 ## 2. Qdrant Vector Storage Enhancements
 
-- [ ] 2.1 Update `QdrantVectorStore` in `app/services/vector_store/qdrant.py` to ensure keyword index on `docset` during collection initialization.
-- [ ] 2.2 Update `_build_point` to attach `docset` in point payloads alongside `doc_id`.
-- [ ] 2.3 Implement `delete_by_docset` method in `QdrantVectorStore` using Qdrant payload filter.
-- [ ] 2.4 Update `search` method to support optional `docset` filtering.
-- [ ] 2.5 Add unit tests in `tests/test_vector_store.py` for docset payload indexing, filtering, and bulk deletion.
+- [x] 2.1 Update `QdrantVectorStore` in `app/services/vector_store/qdrant.py` to ensure keyword index on `docset` during collection initialization.
+- [x] 2.2 Update `_build_point` to attach `docset` in point payloads alongside `doc_id`.
+- [x] 2.3 Implement `delete_by_docset` method in `QdrantVectorStore` using Qdrant payload filter.
+- [x] 2.4 Update `search` method to support optional `docset` filtering.
+- [x] 2.5 Add unit tests in `tests/test_vector_store.py` for docset payload indexing, filtering, and bulk deletion.
+
 
 ## 3. Database Repository Layer
 

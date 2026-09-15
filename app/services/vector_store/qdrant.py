@@ -79,6 +79,12 @@ class QdrantVectorStore:
                     field_name="doc_id",
                     field_schema=models.PayloadSchemaType.KEYWORD,
                 )
+            if "docset" not in payload_schema:
+                await client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="docset",
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
         except Exception as exc:
             raise VectorStoreError(
                 f"Failed to initialize Qdrant collection '{self.collection_name}': {exc}",
@@ -91,6 +97,7 @@ class QdrantVectorStore:
         chunks: list[DocumentChunk],
         vectors: list[list[float]],
         source_url: str | None = None,
+        docset: str = "default",
     ) -> int:
         """Upsert document chunks and vectors into Qdrant."""
         self._validate_upsert_inputs(doc_id, chunks, vectors)
@@ -98,7 +105,8 @@ class QdrantVectorStore:
             return 0
 
         points = [
-            self._build_point(doc_id, chunk, vector, source_url) for chunk, vector in zip(chunks, vectors, strict=True)
+            self._build_point(doc_id, chunk, vector, source_url, docset)
+            for chunk, vector in zip(chunks, vectors, strict=True)
         ]
 
         client = await self.get_client()
@@ -145,6 +153,7 @@ class QdrantVectorStore:
         chunk: DocumentChunk,
         vector: list[float],
         source_url: str | None,
+        docset: str = "default",
     ) -> models.PointStruct:
         """Construct deterministic PointStruct with metadata payload."""
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{doc_id}:{chunk.chunk_index}"))
@@ -153,6 +162,7 @@ class QdrantVectorStore:
 
         payload: dict[str, Any] = {
             "doc_id": doc_id,
+            "docset": docset,
             "chunk_index": chunk.chunk_index,
             "text": chunk.text,
             "source_url": resolved_url,
@@ -199,11 +209,41 @@ class QdrantVectorStore:
                 collection_name=self.collection_name,
             ) from exc
 
+    async def delete_by_docset(self, docset: str) -> int:
+        """Delete all points matching docset from Qdrant."""
+        if not docset or not docset.strip():
+            raise VectorStoreError(
+                "docset cannot be empty",
+                collection_name=self.collection_name,
+            )
+
+        client = await self.get_client()
+        try:
+            await client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="docset",
+                            match=models.MatchValue(value=docset),
+                        )
+                    ]
+                ),
+                wait=True,
+            )
+            return 1
+        except Exception as exc:
+            raise VectorStoreError(
+                f"Failed to delete points for docset '{docset}': {exc}",
+                collection_name=self.collection_name,
+            ) from exc
+
     async def search(
         self,
         query_vector: list[float],
         limit: int = 5,
         doc_id: str | None = None,
+        docset: str | None = None,
         score_threshold: float | None = None,
     ) -> list[VectorSearchResult]:
         """Search nearest points using query vector."""
@@ -213,16 +253,25 @@ class QdrantVectorStore:
                 collection_name=self.collection_name,
             )
 
-        query_filter: models.Filter | None = None
+        must_conditions: list[models.Condition] = []
         if doc_id:
-            query_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="doc_id",
-                        match=models.MatchValue(value=doc_id),
-                    )
-                ]
+            must_conditions.append(
+                models.FieldCondition(
+                    key="doc_id",
+                    match=models.MatchValue(value=doc_id),
+                )
             )
+        if docset:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="docset",
+                    match=models.MatchValue(value=docset),
+                )
+            )
+
+        query_filter: models.Filter | None = None
+        if must_conditions:
+            query_filter = models.Filter(must=must_conditions)
 
         client = await self.get_client()
         try:

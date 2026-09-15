@@ -34,6 +34,7 @@ class BaseVectorStore(Protocol):
         chunks: list[DocumentChunk],
         vectors: list[list[float]],
         source_url: str | None = None,
+        docset: str = "default",
     ) -> int:
         """Upsert document chunks and corresponding vectors into vector store.
 
@@ -42,6 +43,7 @@ class BaseVectorStore(Protocol):
             chunks: List of DocumentChunk instances.
             vectors: Corresponding dense embedding vectors.
             source_url: Optional source URL of the document.
+            docset: Normalized docset identifier.
 
         Returns:
             Number of points successfully upserted.
@@ -59,11 +61,23 @@ class BaseVectorStore(Protocol):
         """
         ...
 
+    async def delete_by_docset(self, docset: str) -> int:
+        """Delete all points associated with a specific docset.
+
+        Args:
+            docset: Normalized docset identifier.
+
+        Returns:
+            Number of points or deletion operations performed.
+        """
+        ...
+
     async def search(
         self,
         query_vector: list[float],
         limit: int = 5,
         doc_id: str | None = None,
+        docset: str | None = None,
         score_threshold: float | None = None,
     ) -> list[VectorSearchResult]:
         """Perform vector similarity search.
@@ -72,6 +86,7 @@ class BaseVectorStore(Protocol):
             query_vector: Query embedding vector.
             limit: Maximum number of search results to return.
             doc_id: Optional filter by specific document ID.
+            docset: Optional filter by specific docset identifier.
             score_threshold: Optional minimum similarity score threshold.
 
         Returns:
