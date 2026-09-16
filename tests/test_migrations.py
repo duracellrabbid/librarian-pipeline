@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from app.core.config import settings
 from sqlalchemy import inspect
 from sqlalchemy.engine import create_engine
@@ -23,6 +24,20 @@ def alembic_cfg(temp_db_path: Path) -> Config:
     db_uri = f"sqlite+aiosqlite:///{temp_db_path.as_posix()}"
     cfg.set_main_option("sqlalchemy.url", db_uri)
     return cfg
+
+
+def test_alembic_revision_ids_within_max_length(alembic_cfg: Config):
+    """Verify that all migration revision IDs adhere to Alembic's 32-character limit.
+
+    Alembic's default alembic_version table uses VARCHAR(32) for version_num.
+    Exceeding 32 characters causes StringDataRightTruncationError on PostgreSQL.
+    """
+    script_dir = ScriptDirectory.from_config(alembic_cfg)
+    for script in script_dir.walk_revisions():
+        assert len(script.revision) <= 32, (
+            f"Revision ID '{script.revision}' in {script.path} exceeds "
+            f"the 32-character limit ({len(script.revision)} > 32)"
+        )
 
 
 def test_alembic_upgrade_and_downgrade_cycle(alembic_cfg: Config, temp_db_path: Path):

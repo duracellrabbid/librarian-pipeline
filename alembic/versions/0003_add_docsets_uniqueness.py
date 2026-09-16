@@ -1,6 +1,6 @@
 """Add docsets table, document docset column, and scoped composite unique index.
 
-Revision ID: 0003_add_docsets_and_scoped_uniqueness
+Revision ID: 0003_add_docsets_uniqueness
 Revises: 0002_add_batch_ingestion_jobs
 Create Date: 2026-09-15 15:00:00.000000
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0003_add_docsets_and_scoped_uniqueness"
+revision: str = "0003_add_docsets_uniqueness"
 down_revision: str | None = "0002_add_batch_ingestion_jobs"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
