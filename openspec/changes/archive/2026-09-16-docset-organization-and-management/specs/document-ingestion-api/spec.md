@@ -27,7 +27,7 @@ The system SHALL provide a `DELETE /docsets/{docset}` endpoint that soft-deletes
 ### Requirement: Document Ingestion Submission
 The system SHALL provide a `POST /docsets/{docset}/documents` endpoint accepting a batch ingestion request payload containing an array of documents (each with a valid `url`, optional `title`, and optional `metadata`), subject to a configurable maximum batch size limit (`MAX_BATCH_INGEST_SIZE`). The system SHALL normalize the `docset` identifier to lowercase and enforce naming constraints (1 to 64 alphanumeric characters, hyphens, and underscores). Ingestion into the reserved `"default"` docset SHALL be rejected. If the target docset does not exist or was previously pruned, it SHALL be automatically created or revived.
 
-#### Scenario: Successful batch ingestion submission into docset
+#### Scenario: Successful batch ingestion submission
 - **WHEN** a client submits a valid ingestion payload to `POST /docsets/{docset}/documents` for a valid non-default docset name
 - **THEN** the system automatically creates or revives the docset if not present, creates a `BatchIngestionJob` in `PENDING` state, creates or re-activates `Document` and `IngestionJob` records linked to the docset and batch, enqueues background processing tasks, and returns HTTP 202 Accepted.
 
@@ -51,7 +51,7 @@ The system SHALL provide a `POST /docsets/{docset}/documents` endpoint accepting
 - **WHEN** a client submits an ingestion request containing duplicate URLs within the same request array
 - **THEN** the system accepts the first occurrence, marks subsequent identical URLs as skipped with reason `duplicate_in_request`, and continues processing non-duplicate URLs.
 
-#### Scenario: Active ingested or in-progress URL skipping within docset
+#### Scenario: Active ingested or in-progress URL skipping
 - **WHEN** a client submits URLs where active documents already exist in the target docset with status `INDEXED` or an in-progress state (`PENDING`, `SCRAPING`, `CHUNKING`, `EMBEDDING`)
 - **THEN** the system skips those URLs within this docset without failing the batch (recording reasons `already_ingested` or `currently_ingesting`), accepts any remaining valid URLs, and returns HTTP 202 Accepted.
 
@@ -74,11 +74,11 @@ The system SHALL provide a `POST /docsets/{docset}/documents` endpoint accepting
 ### Requirement: Document Existence Verification
 The system SHALL provide a `GET /docsets/{docset}/documents/check` endpoint accepting a `url` query parameter to check whether a URL is actively ingested within the specified docset.
 
-#### Scenario: Active URL check within docset
+#### Scenario: Active URL check
 - **WHEN** a client queries `GET /docsets/{docset}/documents/check?url={url}` for a URL actively ingested in that docset
 - **THEN** the system returns HTTP 200 OK with `exists: true`, `doc_id`, and latest job `status`.
 
-#### Scenario: Non-ingested or soft-deleted URL check within docset
+#### Scenario: Non-ingested or soft-deleted URL check
 - **WHEN** a client queries `GET /docsets/{docset}/documents/check?url={url}` for a URL that does not exist in that docset or has been soft-deleted
 - **THEN** the system returns HTTP 200 OK with `exists: false`, `doc_id: null`, and `status: null`.
 
@@ -89,7 +89,7 @@ The system SHALL provide a `DELETE /docsets/{docset}/documents/{doc_id}` endpoin
 - **WHEN** a client sends `DELETE /docsets/{docset}/documents/{doc_id}` for an active document belonging to the specified docset
 - **THEN** the system deletes all vector points in Qdrant matching `doc_id`, marks the `Document` record soft-deleted (`deleted_at = NOW()`), prunes the docset if no active documents remain, and returns HTTP 200 OK.
 
-#### Scenario: Deletion of non-existent or mismatched docset document
+#### Scenario: Deletion of non-existent or already deleted document
 - **WHEN** a client sends `DELETE /docsets/{docset}/documents/{doc_id}` where the document does not exist, belongs to a different docset, or is already soft-deleted
 - **THEN** the system returns HTTP 404 Not Found.
 

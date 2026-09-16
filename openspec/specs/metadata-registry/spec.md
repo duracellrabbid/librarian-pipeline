@@ -4,30 +4,34 @@
 Provides persistent metadata tracking, active URL deduplication, soft deletion, and job state machine management for ingested documents and background processing tasks.
 ## Requirements
 ### Requirement: Document Registration and Active URL Uniqueness
-The system SHALL persist document metadata including source type, source URL, title, chunk count, content hash, and timestamp audit fields. The system SHALL enforce uniqueness of `source_url` among all active (non-deleted) documents.
+The system SHALL persist document metadata including source type, source URL, title, chunk count, content hash, docset identifier, and timestamp audit fields. The system SHALL enforce composite uniqueness of `(docset, source_url)` among all active (non-deleted) documents.
 
 #### Scenario: Registering a new document with a unique URL
-- **WHEN** a document registration request is submitted with a valid source URL that does not exist among active documents
-- **THEN** the system creates and persists the document record with active status and an assigned unique identifier
+- **WHEN** a document registration request is submitted with a source URL that does not exist among active documents in the target docset
+- **THEN** the system creates and persists the document record with active status, associated docset, and an assigned unique identifier.
 
 #### Scenario: Attempting to register an active duplicate URL
-- **WHEN** a document registration request is submitted with a source URL that is already associated with an active document
-- **THEN** the system rejects the registration request with a duplicate URL conflict error
+- **WHEN** a document registration request is submitted with a source URL that is already associated with an active document in the same docset
+- **THEN** the system rejects the registration request with a duplicate URL conflict error.
+
+#### Scenario: Registering an identical URL in a different docset
+- **WHEN** a document registration request is submitted with a source URL that exists actively in a different docset
+- **THEN** the system accepts the registration and creates a new active document record independent of the other docset.
 
 #### Scenario: Registering a URL previously soft-deleted
-- **WHEN** a document registration request is submitted with a source URL that belongs only to soft-deleted documents
-- **THEN** the system accepts the registration and creates a new active document record with a distinct identifier
+- **WHEN** a document registration request is submitted with a source URL that was soft-deleted in the target docset
+- **THEN** the system re-activates the existing document record (`deleted_at = NULL`), clears previous content hash/chunk count, and prepares it for re-indexing.
 
 ### Requirement: Document Soft Deletion
-The system SHALL support non-destructive deletion of documents by marking them as deleted with a deletion timestamp. Soft-deleted documents SHALL be excluded from standard active document queries and active URL uniqueness constraints.
+The system SHALL support non-destructive deletion of documents by marking them as deleted with a deletion timestamp. Soft-deleted documents SHALL be excluded from standard active document queries and active `(docset, source_url)` uniqueness constraints. If a soft-deleted document was the last active document in its docset, the docset SHALL be pruned.
 
 #### Scenario: Soft deleting an active document
 - **WHEN** a deletion request is issued for an existing active document
-- **THEN** the system records a deletion timestamp on the document record and retains the record and its associated history in the database
+- **THEN** the system records a deletion timestamp on the document record, decrements the docset's active count, prunes the docset if count reaches zero, and retains the record in the database.
 
 #### Scenario: Querying active documents
 - **WHEN** documents are retrieved via active listing or lookup operations
-- **THEN** documents containing a non-null deletion timestamp are excluded from the results
+- **THEN** documents containing a non-null deletion timestamp are excluded from the results.
 
 ### Requirement: Ingestion Job State Lifecycle Management
 The system SHALL track the state lifecycle of ingestion jobs associated with documents. The state machine SHALL support transitions across `PENDING`, `SCRAPING`, `CHUNKING`, `EMBEDDING`, `INDEXED`, and `FAILED` states, tracking progress percentage, error details upon failure, and completion timestamps.
@@ -60,13 +64,32 @@ The system SHALL maintain a version-controlled, reproducible database schema man
 - **THEN** all created schema objects are reverted cleanly to their prior state
 
 ### Requirement: Indexed Document Retrieval and Counting
-The system SHALL provide repository operations to query and count active documents that have successfully achieved `INDEXED` status, with optional substring filtering and offset-based pagination.
+The system SHALL provide repository operations to query and count active documents that have successfully achieved `INDEXED` status within a specified docset, with optional substring filtering and offset-based pagination.
 
 #### Scenario: Paged query for indexed documents
-- **WHEN** the repository queries indexed documents with pagination parameters
-- **THEN** it executes a paginated SQL query returning active documents whose latest job has status `INDEXED` ordered by creation time descending.
+- **WHEN** the repository queries indexed documents for a specific docset with pagination parameters
+- **THEN** it executes a paginated SQL query returning active documents belonging to that docset whose latest job has status `INDEXED`, ordered by creation time descending.
 
 #### Scenario: Substring query filter on URL or title
-- **WHEN** a search term is specified
-- **THEN** the repository applies a case-insensitive `ILIKE` filter on `Document.source_url` and `Document.title`, returning matching items and accurate total match count.
+- **WHEN** a search term is specified for a docset query
+- **THEN** the repository applies a case-insensitive `ILIKE` filter on `Document.source_url` and `Document.title` scoped to that docset, returning matching items and accurate total match count.
+
+### Requirement: Docset Management and Auto-Pruning Lifecycle
+The system SHALL manage docset lifecycle records tracking normalized name, active document count, and audit timestamps. The system SHALL auto-create or revive a docset record when an ingestion job adds documents to it. When all active documents in a docset are soft-deleted, the docset SHALL be marked pruned and omitted from active listings. The system SHALL initialize a reserved `"default"` docset during migration to hold all pre-existing legacy documents.
+
+#### Scenario: Auto-creating a new docset
+- **WHEN** documents are registered for a previously non-existent docset identifier
+- **THEN** the system persists a new active docset record with normalized lowercase name and initializes its document count.
+
+#### Scenario: Reviving a pruned docset
+- **WHEN** new documents are submitted to a docset that previously had all documents soft-deleted
+- **THEN** the system revives the docset to active status and updates its active document count.
+
+#### Scenario: Auto-pruning docset upon zero remaining active documents
+- **WHEN** the last active document in a docset is soft-deleted
+- **THEN** the system marks the docset as pruned so it is excluded from active docset queries.
+
+#### Scenario: Seeding legacy default docset
+- **WHEN** database migration executes
+- **THEN** the system creates the `"default"` docset and associates all existing documents lacking a docset with `"default"`.
 

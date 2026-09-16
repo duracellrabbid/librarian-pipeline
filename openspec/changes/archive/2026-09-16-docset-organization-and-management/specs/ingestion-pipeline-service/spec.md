@@ -3,7 +3,7 @@
 ### Requirement: Multi-Component Pipeline Orchestration
 The system SHALL orchestrate content extraction (`BaseExtractor`), hybrid chunking (`BaseChunker`), vector embedding (`BaseEmbeddingClient`), and vector storage (`BaseVectorStore`) within a single unified execution flow, carrying docset context, enforcing defense-in-depth domain validation before extraction, and verifying that the target document remains active before upserting vectors into Qdrant.
 
-#### Scenario: Successful full ingestion execution with docset tagging
+#### Scenario: Successful full ingestion execution
 - **WHEN** a valid URL from an allowed domain is processed by the pipeline service for an active document belonging to a docset
 - **THEN** web content is extracted, partitioned into chunks, embedded into 1024-d vectors, and upserted into Qdrant with both `doc_id` and `docset` attached in payloads.
 

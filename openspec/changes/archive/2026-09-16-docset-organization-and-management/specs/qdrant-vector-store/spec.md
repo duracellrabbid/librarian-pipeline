@@ -23,14 +23,14 @@ The system SHALL verify and idempotently create the target Qdrant vector collect
 ### Requirement: Chunk Vector Upsert with Payload Metadata
 The system SHALL upsert document chunks and their associated vector embeddings into Qdrant, attaching rich metadata payloads including `doc_id`, `docset`, `chunk_index`, `text`, `source_url`, and `heading_path`.
 
-#### Scenario: Successful chunk vector batch upsert with docset
+#### Scenario: Successful chunk vector batch upsert
 - **WHEN** a list of chunks, their corresponding embeddings, document ID, and docset identifier are provided
 - **THEN** points are stored in Qdrant with deterministic UUIDs and complete queryable payload fields including `docset`.
 
 ### Requirement: Similarity Search by Vector
 The system SHALL provide vector similarity search returning top-k nearest chunks with similarity scores and payloads, optionally filtered by `docset`, `doc_id`, or other metadata fields.
 
-#### Scenario: Nearest neighbor search filtered by docset
+#### Scenario: Nearest neighbor search
 - **WHEN** a 1024-dimensional query vector is submitted with a `docset` filter and limit K
 - **THEN** only chunk vectors matching the specified `docset` are evaluated, returning the top K results in descending score order.
 

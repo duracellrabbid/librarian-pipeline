@@ -24,11 +24,11 @@ The system SHALL manage docset lifecycle records tracking normalized name, activ
 ### Requirement: Document Registration and Active URL Uniqueness
 The system SHALL persist document metadata including source type, source URL, title, chunk count, content hash, docset identifier, and timestamp audit fields. The system SHALL enforce composite uniqueness of `(docset, source_url)` among all active (non-deleted) documents.
 
-#### Scenario: Registering a new document with a unique URL in a docset
+#### Scenario: Registering a new document with a unique URL
 - **WHEN** a document registration request is submitted with a source URL that does not exist among active documents in the target docset
 - **THEN** the system creates and persists the document record with active status, associated docset, and an assigned unique identifier.
 
-#### Scenario: Attempting to register an active duplicate URL in the same docset
+#### Scenario: Attempting to register an active duplicate URL
 - **WHEN** a document registration request is submitted with a source URL that is already associated with an active document in the same docset
 - **THEN** the system rejects the registration request with a duplicate URL conflict error.
 
@@ -36,7 +36,7 @@ The system SHALL persist document metadata including source type, source URL, ti
 - **WHEN** a document registration request is submitted with a source URL that exists actively in a different docset
 - **THEN** the system accepts the registration and creates a new active document record independent of the other docset.
 
-#### Scenario: Registering a URL previously soft-deleted in the same docset
+#### Scenario: Registering a URL previously soft-deleted
 - **WHEN** a document registration request is submitted with a source URL that was soft-deleted in the target docset
 - **THEN** the system re-activates the existing document record (`deleted_at = NULL`), clears previous content hash/chunk count, and prepares it for re-indexing.
 
@@ -54,10 +54,10 @@ The system SHALL support non-destructive deletion of documents by marking them a
 ### Requirement: Indexed Document Retrieval and Counting
 The system SHALL provide repository operations to query and count active documents that have successfully achieved `INDEXED` status within a specified docset, with optional substring filtering and offset-based pagination.
 
-#### Scenario: Paged query for indexed documents in a docset
+#### Scenario: Paged query for indexed documents
 - **WHEN** the repository queries indexed documents for a specific docset with pagination parameters
 - **THEN** it executes a paginated SQL query returning active documents belonging to that docset whose latest job has status `INDEXED`, ordered by creation time descending.
 
-#### Scenario: Substring query filter on URL or title within docset
+#### Scenario: Substring query filter on URL or title
 - **WHEN** a search term is specified for a docset query
 - **THEN** the repository applies a case-insensitive `ILIKE` filter on `Document.source_url` and `Document.title` scoped to that docset, returning matching items and accurate total match count.
