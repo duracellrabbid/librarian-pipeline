@@ -176,7 +176,7 @@ class TestCompleteDocumentLifecycle:
         del_again = await integration_client.delete(f"/api/v1/documents/{doc_id}")
         assert del_again.status_code == 404
 
-        # 8. Verify re-ingestion is permitted after soft-deletion
+        # 8. Verify re-ingestion re-activates existing document record
         reingest_resp = await integration_client.post(
             "/api/v1/documents/ingest",
             json={"documents": [{"url": target_url, "title": "RAG Re-ingested"}]},
@@ -185,7 +185,7 @@ class TestCompleteDocumentLifecycle:
         new_batch_id = reingest_resp.json()["main_job_id"]
         status_reingest = await integration_client.get(f"/api/v1/documents/status/{new_batch_id}")
         new_doc_id = status_reingest.json()["jobs"][0]["doc_id"]
-        assert new_doc_id != doc_id
+        assert new_doc_id == doc_id
 
     @pytest.mark.asyncio
     async def test_api_v1_prefixed_lifecycle(

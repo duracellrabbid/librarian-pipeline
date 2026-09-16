@@ -893,3 +893,392 @@ async def test_create_batch_and_jobs_custom_allowed_domains(session: AsyncSessio
     assert accepted[0][0].source_url == "https://custom.org/doc1"
     assert skipped[0].url == "https://en.wikipedia.org/wiki/Doc2"
     assert skipped[0].reason == "domain_not_allowed"
+
+
+def test_normalize_docset_name_valid():
+    """Verify normalize_docset_name normalizes casing and whitespace for valid names."""
+    from app.services.repository import normalize_docset_name
+
+    assert normalize_docset_name("Python-Docs ") == "python-docs"
+    assert normalize_docset_name("set_1-v2") == "set_1-v2"
+    assert normalize_docset_name("  MY_DOCSET  ") == "my_docset"
+    assert normalize_docset_name("a" * 64) == "a" * 64
+
+
+def test_normalize_docset_name_invalid_format():
+    """Verify normalize_docset_name raises InvalidDocsetNameError for invalid patterns."""
+    from app.services.repository import InvalidDocsetNameError, normalize_docset_name
+
+    with pytest.raises(InvalidDocsetNameError, match="Invalid docset name"):
+        normalize_docset_name("")
+
+    with pytest.raises(InvalidDocsetNameError, match="Invalid docset name"):
+        normalize_docset_name("   ")
+
+    with pytest.raises(InvalidDocsetNameError, match="Invalid docset name"):
+        normalize_docset_name("docset/test")
+
+    with pytest.raises(InvalidDocsetNameError, match="Invalid docset name"):
+        normalize_docset_name("docset.name")
+
+    with pytest.raises(InvalidDocsetNameError, match="Invalid docset name"):
+        normalize_docset_name("a" * 65)
+
+
+def test_normalize_docset_name_reserved_keyword():
+    """Verify normalize_docset_name rejects the reserved 'default' keyword."""
+    from app.services.repository import ReservedDocsetNameError, normalize_docset_name
+
+    with pytest.raises(ReservedDocsetNameError, match="reserved"):
+        normalize_docset_name("default")
+
+    with pytest.raises(ReservedDocsetNameError, match="reserved"):
+        normalize_docset_name("DEFAULT")
+
+    with pytest.raises(ReservedDocsetNameError, match="reserved"):
+        normalize_docset_name("  default  ")
+
+
+@pytest.mark.asyncio
+async def test_check_active_url_scoped_to_docset(session: AsyncSession):
+    """Verify check_active_url isolates active checks by docset."""
+    from app.models import Docset, Document
+    from app.services.repository import check_active_url
+
+    session.add_all(
+        [
+            Docset(name="docset-x"),
+            Docset(name="docset-y"),
+            Document(source_type="url", source_url="https://example.com/unique-page", docset="docset-x"),
+        ]
+    )
+    await session.commit()
+
+    # Found in docset-x
+    doc_x = await check_active_url(session, "https://example.com/unique-page", docset="docset-x")
+    assert doc_x is not None
+    assert doc_x.docset == "docset-x"
+
+    # Absent in docset-y
+    doc_y = await check_active_url(session, "https://example.com/unique-page", docset="docset-y")
+    assert doc_y is None
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_auto_creates_docset(session: AsyncSession):
+    """Verify create_batch_and_jobs auto-creates docset if not present."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import Docset
+    from app.services.repository import create_batch_and_jobs
+    from sqlmodel import select
+
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Deep_learning", title="DL")]
+
+    batch, accepted, skipped = await create_batch_and_jobs(
+        session,
+        items,
+        docset="ml-docs",
+    )
+
+    assert batch.accepted_count == 1
+    assert len(accepted) == 1
+    doc, job = accepted[0]
+    assert doc.docset == "ml-docs"
+
+    query = select(Docset).where(Docset.name == "ml-docs")
+    res = await session.execute(query)
+    stored_docset = res.scalar_one()
+    assert stored_docset.name == "ml-docs"
+    assert stored_docset.document_count == 1
+    assert stored_docset.deleted_at is None
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_revives_pruned_docset(session: AsyncSession):
+    """Verify create_batch_and_jobs revives a previously pruned docset."""
+    from datetime import UTC, datetime
+
+    from app.api.schemas import DocumentIngestItem
+    from app.models import Docset
+    from app.services.repository import create_batch_and_jobs
+    from sqlmodel import select
+
+    pruned = Docset(name="revived-set", document_count=0, deleted_at=datetime.now(UTC))
+    session.add(pruned)
+    await session.commit()
+
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Revival", title="Revival")]
+    batch, accepted, _ = await create_batch_and_jobs(session, items, docset="revived-set")
+
+    assert batch.accepted_count == 1
+    query = select(Docset).where(Docset.name == "revived-set")
+    res = await session.execute(query)
+    stored_docset = res.scalar_one()
+    assert stored_docset.deleted_at is None
+    assert stored_docset.document_count == 1
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_same_url_across_different_docsets(session: AsyncSession):
+    """Verify identical URL is accepted into different docsets independently."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import JobStatus
+    from app.services.repository import create_batch_and_jobs
+
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Shared_Topic", title="Shared")]
+
+    # 1. Ingest into docset-alpha and mark as INDEXED
+    batch1, accepted1, _ = await create_batch_and_jobs(session, items, docset="docset-alpha")
+    assert batch1.accepted_count == 1
+    doc1, job1 = accepted1[0]
+    job1.status = JobStatus.INDEXED.value
+    await session.commit()
+
+    # 2. Ingest same URL into docset-beta -> must be accepted!
+    batch2, accepted2, skipped2 = await create_batch_and_jobs(session, items, docset="docset-beta")
+    assert batch2.accepted_count == 1
+    assert len(skipped2) == 0
+    doc2, job2 = accepted2[0]
+    assert doc2.id != doc1.id
+    assert doc2.docset == "docset-beta"
+
+
+@pytest.mark.asyncio
+async def test_create_batch_and_jobs_reactivates_soft_deleted_document(session: AsyncSession):
+    """Verify re-submitting a soft-deleted URL in the same docset re-activates it."""
+    from datetime import UTC, datetime
+
+    from app.api.schemas import DocumentIngestItem
+    from app.models import JobStatus
+    from app.services.repository import create_batch_and_jobs
+
+    items = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Recycled", title="Initial")]
+
+    # 1. First ingestion
+    batch1, accepted1, _ = await create_batch_and_jobs(session, items, docset="recycled-set")
+    doc1, job1 = accepted1[0]
+    doc1.chunk_count = 5
+    doc1.content_hash = "abc123hash"
+    job1.status = JobStatus.INDEXED.value
+    await session.commit()
+
+    # 2. Soft-delete the document
+    doc1.deleted_at = datetime.now(UTC)
+    await session.commit()
+
+    # 3. Re-ingest same URL into the same docset
+    items2 = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/Recycled", title="Re-activated")]
+    batch2, accepted2, skipped2 = await create_batch_and_jobs(session, items2, docset="recycled-set")
+
+    assert batch2.accepted_count == 1
+    assert len(skipped2) == 0
+    doc2, job2 = accepted2[0]
+    assert doc2.id == doc1.id
+    assert doc2.deleted_at is None
+    assert doc2.title == "Re-activated"
+    assert doc2.chunk_count == 0
+    assert doc2.content_hash is None
+
+
+@pytest.mark.asyncio
+async def test_check_active_url_and_check_document_by_url(session: AsyncSession):
+    """Verify check_active_url and check_document_by_url filter by docset and deleted_at."""
+    from datetime import UTC, datetime
+
+    from app.models import Document
+    from app.services.repository import check_active_url, check_document_by_url
+
+    doc_active = Document(
+        source_type="url",
+        source_url="https://example.com/check-test",
+        docset="test-docset",
+        title="Active Doc",
+    )
+    doc_deleted = Document(
+        source_type="url",
+        source_url="https://example.com/check-deleted",
+        docset="test-docset",
+        title="Deleted Doc",
+        deleted_at=datetime.now(UTC),
+    )
+    session.add(doc_active)
+    session.add(doc_deleted)
+    await session.commit()
+
+    # Active doc checks
+    assert await check_active_url(session, "https://example.com/check-test", docset="test-docset") is not None
+    assert await check_active_url(session, "https://example.com/check-test", docset="other-docset") is None
+    assert (
+        await check_document_by_url(
+            session, "https://example.com/check-test", docset="test-docset", include_deleted=False
+        )
+        is not None
+    )
+    assert (
+        await check_document_by_url(
+            session, "https://example.com/check-test", docset="test-docset", include_deleted=True
+        )
+        is not None
+    )
+
+    # Deleted doc checks
+    assert await check_active_url(session, "https://example.com/check-deleted", docset="test-docset") is None
+    assert (
+        await check_document_by_url(
+            session, "https://example.com/check-deleted", docset="test-docset", include_deleted=False
+        )
+        is None
+    )
+    assert (
+        await check_document_by_url(
+            session, "https://example.com/check-deleted", docset="test-docset", include_deleted=True
+        )
+        is not None
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_active_docsets_filtering_and_pagination(session: AsyncSession):
+    """Verify list_active_docsets includes only active docsets with documents and respects pagination."""
+    from datetime import UTC, datetime
+
+    from app.models import Docset
+    from app.services.repository import list_active_docsets
+
+    now = datetime.now(UTC)
+    docset1 = Docset(name="active-alpha", document_count=3, created_at=now, updated_at=now)
+    docset2 = Docset(name="active-beta", document_count=1, created_at=now, updated_at=now)
+    docset_empty = Docset(name="empty-set", document_count=0, created_at=now, updated_at=now)
+    docset_pruned = Docset(name="pruned-set", document_count=2, deleted_at=now, created_at=now, updated_at=now)
+
+    session.add(docset1)
+    session.add(docset2)
+    session.add(docset_empty)
+    session.add(docset_pruned)
+    await session.commit()
+
+    total, items = await list_active_docsets(session, limit=10, offset=0)
+    assert total == 2
+    names = [d.name for d in items]
+    assert names == ["active-alpha", "active-beta"]
+
+    # Test pagination
+    total_paged, items_paged = await list_active_docsets(session, limit=1, offset=1)
+    assert total_paged == 2
+    assert len(items_paged) == 1
+    assert items_paged[0].name == "active-beta"
+
+
+@pytest.mark.asyncio
+async def test_delete_docset_soft_deletes_documents_and_prunes(session: AsyncSession):
+    """Verify delete_docset soft-deletes all member documents and marks the docset pruned."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import Docset, Document
+    from app.services.repository import create_batch_and_jobs, delete_docset
+    from sqlmodel import select
+
+    items = [
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/Doc1"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/Doc2"),
+    ]
+    await create_batch_and_jobs(session, items, docset="bulk-del-set")
+
+    deleted_count = await delete_docset(session, "bulk-del-set")
+    assert deleted_count == 2
+
+    # Verify docset is pruned
+    res = await session.execute(select(Docset).where(Docset.name == "bulk-del-set"))
+    ds = res.scalar_one()
+    assert ds.deleted_at is not None
+    assert ds.document_count == 0
+
+    # Verify documents are soft-deleted
+    doc_res = await session.execute(select(Document).where(Document.docset == "bulk-del-set"))
+    docs = doc_res.scalars().all()
+    assert len(docs) == 2
+    assert all(d.deleted_at is not None for d in docs)
+
+
+@pytest.mark.asyncio
+async def test_delete_docset_not_found_raises_error(session: AsyncSession):
+    """Verify delete_docset raises DocsetNotFoundError when docset does not exist or has no active docs."""
+    from app.services.repository import DocsetNotFoundError, delete_docset
+
+    with pytest.raises(DocsetNotFoundError):
+        await delete_docset(session, "nonexistent-docset")
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_document_scoped_and_auto_prunes(session: AsyncSession):
+    """Verify soft_delete_document updates docset count and auto-prunes docset on zero active docs."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import Docset
+    from app.services.repository import (
+        DocumentNotFoundError,
+        create_batch_and_jobs,
+        soft_delete_document,
+    )
+    from sqlmodel import select
+
+    items = [
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/ItemA"),
+        DocumentIngestItem(url="https://en.wikipedia.org/wiki/ItemB"),
+    ]
+    _, accepted, _ = await create_batch_and_jobs(session, items, docset="auto-prune-set")
+    doc_a, _ = accepted[0]
+    doc_b, _ = accepted[1]
+
+    # Mismatched docset raises DocumentNotFoundError
+    with pytest.raises(DocumentNotFoundError):
+        await soft_delete_document(session, doc_a.id, docset="wrong-docset")
+
+    # Delete first doc -> count becomes 1, docset still active
+    await soft_delete_document(session, doc_a.id, docset="auto-prune-set")
+    res = await session.execute(select(Docset).where(Docset.name == "auto-prune-set"))
+    ds = res.scalar_one()
+    assert ds.document_count == 1
+    assert ds.deleted_at is None
+
+    # Delete second doc -> count becomes 0, docset auto-pruned
+    await soft_delete_document(session, doc_b.id, docset="auto-prune-set")
+    res2 = await session.execute(select(Docset).where(Docset.name == "auto-prune-set"))
+    ds2 = res2.scalar_one()
+    assert ds2.document_count == 0
+    assert ds2.deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_list_indexed_documents_scoped_to_docset(session: AsyncSession):
+    """Verify list_indexed_documents filters by docset when provided."""
+    from app.api.schemas import DocumentIngestItem
+    from app.models import JobStatus
+    from app.services.repository import (
+        create_batch_and_jobs,
+        list_indexed_documents,
+        update_job_status,
+    )
+
+    items_a = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/SetA_Doc")]
+    items_b = [DocumentIngestItem(url="https://en.wikipedia.org/wiki/SetB_Doc")]
+
+    _, accepted_a, _ = await create_batch_and_jobs(session, items_a, docset="set-a")
+    _, accepted_b, _ = await create_batch_and_jobs(session, items_b, docset="set-b")
+
+    _, job_a = accepted_a[0]
+    _, job_b = accepted_b[0]
+    await update_job_status(session, job_a.id, JobStatus.INDEXED)
+    await update_job_status(session, job_b.id, JobStatus.INDEXED)
+
+    # Scoped to set-a
+    total_a, list_a = await list_indexed_documents(session, docset="set-a")
+    assert total_a == 1
+    assert list_a[0].source_url == "https://en.wikipedia.org/wiki/SetA_Doc"
+
+    # Scoped to set-b
+    total_b, list_b = await list_indexed_documents(session, docset="set-b")
+    assert total_b == 1
+    assert list_b[0].source_url == "https://en.wikipedia.org/wiki/SetB_Doc"
+
+    # Unscoped lists both
+    total_all, list_all = await list_indexed_documents(session)
+    assert total_all == 2

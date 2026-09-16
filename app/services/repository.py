@@ -1,5 +1,4 @@
-"""Database repository layer for document and ingestion job operations."""
-
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -20,6 +19,7 @@ from app.core.security import is_allowed_url
 from app.models import (
     BatchIngestionJob,
     BatchJobStatus,
+    Docset,
     Document,
     IngestionJob,
     JobStatus,
@@ -34,6 +34,14 @@ class DuplicateActiveURLError(RepositoryError):
     """Raised when an active document already exists with the given source URL."""
 
 
+class InvalidDocsetNameError(RepositoryError):
+    """Raised when a docset identifier fails normalization or validation rules."""
+
+
+class ReservedDocsetNameError(RepositoryError):
+    """Raised when attempting to modify or ingest into the reserved 'default' docset."""
+
+
 class JobNotFoundError(RepositoryError):
     """Raised when an ingestion job cannot be found."""
 
@@ -42,12 +50,55 @@ class DocumentNotFoundError(RepositoryError):
     """Raised when a document cannot be found."""
 
 
-async def check_active_url(session: AsyncSession, url: str) -> Document | None:
-    """Retrieve an active (non-deleted) document by its source URL if one exists."""
+class DocsetNotFoundError(RepositoryError):
+    """Raised when a docset cannot be found or has no active documents."""
+
+
+def normalize_docset_name(raw: str) -> str:
+    """Normalize and validate a docset identifier string.
+
+    Enforces lowercase, length between 1 and 64 characters, [a-z0-9_-],
+    and rejects the reserved 'default' keyword.
+    """
+    cleaned = raw.strip().lower()
+    if not re.match(r"^[a-z0-9_-]{1,64}$", cleaned):
+        raise InvalidDocsetNameError(f"Invalid docset name '{raw}'. Must be 1-64 characters matching ^[a-z0-9_-]+$.")
+    if cleaned == "default":
+        raise ReservedDocsetNameError(
+            "The 'default' docset name is reserved and cannot be modified or ingested into directly."
+        )
+    return cleaned
+
+
+async def check_active_url(
+    session: AsyncSession,
+    url: str,
+    docset: str = "default",
+) -> Document | None:
+    """Retrieve an active (non-deleted) document by its source URL and docset if one exists."""
     statement = select(Document).where(
+        Document.docset == docset,
         Document.source_url == url,
         Document.deleted_at.is_(None),
     )
+    result = await session.execute(statement)
+    return result.scalars().first()
+
+
+async def check_document_by_url(
+    session: AsyncSession,
+    url: str,
+    docset: str = "default",
+    include_deleted: bool = False,
+) -> Document | None:
+    """Retrieve a document by its source URL and docset, optionally including soft-deleted records."""
+    conditions = [
+        Document.docset == docset,
+        Document.source_url == url,
+    ]
+    if not include_deleted:
+        conditions.append(Document.deleted_at.is_(None))
+    statement = select(Document).where(*conditions)
     result = await session.execute(statement)
     return result.scalars().first()
 
@@ -74,22 +125,78 @@ def _deduplicate_items(
 async def _inspect_single_url_status(
     session: AsyncSession,
     url: str,
+    docset: str = "default",
 ) -> tuple[str, Document | None]:
-    """Inspect active document for URL and return outcome or skip reason."""
+    """Inspect active or soft-deleted document for URL in docset and return outcome or skip reason."""
+    doc = await check_active_url(session, url, docset=docset)
+    if doc is not None:
+        statement = (
+            select(IngestionJob).where(IngestionJob.document_id == doc.id).order_by(IngestionJob.created_at.desc())
+        )
+        result = await session.execute(statement)
+        latest_job = result.scalars().first()
 
-    doc = await check_active_url(session, url)
-    if doc is None:
-        return "accept_new", None
+        if latest_job is None or latest_job.status == JobStatus.FAILED.value:
+            return "reingest_failed", doc
+        if latest_job.status == JobStatus.INDEXED.value:
+            return "already_ingested", doc
+        return "currently_ingesting", doc
 
-    statement = select(IngestionJob).where(IngestionJob.document_id == doc.id).order_by(IngestionJob.created_at.desc())
-    result = await session.execute(statement)
-    latest_job = result.scalars().first()
+    deleted_doc = await check_document_by_url(session, url, docset=docset, include_deleted=True)
+    if deleted_doc is not None and deleted_doc.deleted_at is not None:
+        return "reactivate_deleted", deleted_doc
 
-    if latest_job is None or latest_job.status == JobStatus.FAILED.value:
-        return "reingest_failed", doc
-    if latest_job.status == JobStatus.INDEXED.value:
-        return "already_ingested", doc
-    return "currently_ingesting", doc
+    return "accept_new", None
+
+
+async def _ensure_docset(session: AsyncSession, docset_name: str) -> Docset:
+    """Ensure docset exists and is active in database, creating or reviving as necessary."""
+    statement = select(Docset).where(Docset.name == docset_name)
+    res = await session.execute(statement)
+    docset_record = res.scalars().first()
+
+    now = datetime.now(UTC)
+    if docset_record is None:
+        docset_record = Docset(name=docset_name, document_count=0, created_at=now, updated_at=now)
+        session.add(docset_record)
+        await session.flush()
+    elif docset_record.deleted_at is not None:
+        docset_record.deleted_at = None
+        docset_record.updated_at = now
+        session.add(docset_record)
+        await session.flush()
+
+    return docset_record
+
+
+async def _prepare_document_for_job(
+    session: AsyncSession,
+    item: DocumentIngestItem,
+    source_type: str,
+    docset: str,
+    outcome: str,
+    existing_doc: Document | None,
+) -> Document:
+    """Prepare new or reactivated document instance for ingestion job creation."""
+    if outcome == "reactivate_deleted" and existing_doc is not None:
+        existing_doc.deleted_at = None
+        existing_doc.title = item.title or existing_doc.title
+        existing_doc.chunk_count = 0
+        existing_doc.content_hash = None
+        existing_doc.updated_at = datetime.now(UTC)
+        session.add(existing_doc)
+        return existing_doc
+
+    doc = existing_doc or Document(
+        source_type=source_type,
+        source_url=str(item.url),
+        title=item.title,
+        docset=docset,
+    )
+    if existing_doc is None:
+        session.add(doc)
+        await session.flush()
+    return doc
 
 
 async def create_batch_and_jobs(
@@ -97,9 +204,11 @@ async def create_batch_and_jobs(
     items: Sequence[DocumentIngestItem],
     source_type: str = "url",
     allowed_domains: list[str] | None = None,
+    docset: str = "default",
 ) -> tuple[BatchIngestionJob, list[tuple[Document, IngestionJob]], list[SkippedDocumentItem]]:
     """Register a batch and associated documents and jobs with pre-flight status filtering."""
     unique_items, skipped_items = _deduplicate_items(items)
+    docset_record = await _ensure_docset(session, docset)
 
     batch = BatchIngestionJob(
         status=BatchJobStatus.PENDING.value,
@@ -123,7 +232,7 @@ async def create_batch_and_jobs(
             )
             continue
 
-        outcome, existing_doc = await _inspect_single_url_status(session, url_str)
+        outcome, existing_doc = await _inspect_single_url_status(session, url_str, docset=docset)
 
         if outcome in ("already_ingested", "currently_ingesting"):
             skipped_items.append(
@@ -135,14 +244,14 @@ async def create_batch_and_jobs(
             )
             continue
 
-        doc = existing_doc or Document(
+        doc = await _prepare_document_for_job(
+            session=session,
+            item=item,
             source_type=source_type,
-            source_url=url_str,
-            title=item.title,
+            docset=docset,
+            outcome=outcome,
+            existing_doc=existing_doc,
         )
-        if existing_doc is None:
-            session.add(doc)
-            await session.flush()
 
         job = IngestionJob(
             batch_id=batch.id,
@@ -163,6 +272,16 @@ async def create_batch_and_jobs(
         }
         for s in skipped_items
     ]
+
+    # Refresh docset active document count
+    count_stmt = select(func.count(Document.id)).where(
+        Document.docset == docset,
+        Document.deleted_at.is_(None),
+    )
+    count_res = await session.execute(count_stmt)
+    docset_record.document_count = count_res.scalar() or 0
+    docset_record.updated_at = datetime.now(UTC)
+    session.add(docset_record)
 
     if batch.accepted_count == 0:
         batch.status = BatchJobStatus.COMPLETED.value
@@ -356,21 +475,65 @@ async def update_job_status(
     return job
 
 
-async def soft_delete_document(session: AsyncSession, doc_id: UUID) -> Document:
-    """Soft-delete a document by recording a deleted_at timestamp.
-
-    Raises DocumentNotFoundError if no document matching doc_id exists.
-    """
-    statement = select(Document).where(Document.id == doc_id)
+async def _find_active_document(
+    session: AsyncSession,
+    doc_id: UUID,
+    docset: str | None = None,
+) -> Document:
+    """Retrieve an active document by id and optional docset filter."""
+    conditions = [Document.id == doc_id, Document.deleted_at.is_(None)]
+    if docset is not None:
+        conditions.append(Document.docset == docset)
+    statement = select(Document).where(*conditions)
     result = await session.execute(statement)
     document = result.scalars().first()
-
     if document is None:
         raise DocumentNotFoundError(f"Document {doc_id} not found")
+    return document
 
+
+async def _sync_docset_pruning(
+    session: AsyncSession,
+    docset_name: str,
+    now: datetime,
+) -> None:
+    """Recalculate active document count for docset and auto-prune if zero."""
+    statement = select(Docset).where(Docset.name == docset_name)
+    res = await session.execute(statement)
+    docset_record = res.scalars().first()
+    if docset_record is None:
+        return
+
+    count_stmt = select(func.count(Document.id)).where(
+        Document.docset == docset_name,
+        Document.deleted_at.is_(None),
+    )
+    count_res = await session.execute(count_stmt)
+    remaining = count_res.scalar() or 0
+    docset_record.document_count = remaining
+    docset_record.updated_at = now
+    if remaining == 0:
+        docset_record.deleted_at = now
+    session.add(docset_record)
+
+
+async def soft_delete_document(
+    session: AsyncSession,
+    doc_id: UUID,
+    docset: str | None = None,
+) -> Document:
+    """Soft-delete an active document and auto-prune its docset if active count reaches zero.
+
+    Raises DocumentNotFoundError if no matching active document exists.
+    """
+    document = await _find_active_document(session, doc_id, docset=docset)
     now = datetime.now(UTC)
     document.deleted_at = now
     document.updated_at = now
+    session.add(document)
+    await session.flush()
+
+    await _sync_docset_pruning(session, document.docset, now)
 
     await session.commit()
     await session.refresh(document)
@@ -409,7 +572,10 @@ async def update_document_metadata(
     return document
 
 
-def _build_indexed_documents_filters(query: str | None = None) -> list[Any]:
+def _build_indexed_documents_filters(
+    docset: str | None = None,
+    query: str | None = None,
+) -> list[Any]:
     """Construct base filter conditions and indexed document subquery."""
     latest_job_time = (
         select(
@@ -438,6 +604,9 @@ def _build_indexed_documents_filters(query: str | None = None) -> list[Any]:
         Document.id.in_(select(indexed_docs_subquery)),
     ]
 
+    if docset is not None:
+        filters.append(Document.docset == docset)
+
     if query and query.strip():
         search_pattern = f"%{query.strip()}%"
         filters.append(
@@ -455,9 +624,10 @@ async def list_indexed_documents(
     limit: int = 20,
     offset: int = 0,
     query: str | None = None,
+    docset: str | None = None,
 ) -> tuple[int, list[DocumentListItemResponse]]:
     """Retrieve paginated active documents whose latest ingestion job is INDEXED."""
-    filters = _build_indexed_documents_filters(query)
+    filters = _build_indexed_documents_filters(docset=docset, query=query)
 
     count_stmt = select(func.count(Document.id)).where(*filters)
     count_result = await session.execute(count_stmt)
@@ -481,3 +651,54 @@ async def list_indexed_documents(
     ]
 
     return total, items
+
+
+async def list_active_docsets(
+    session: AsyncSession,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[int, list[Docset]]:
+    """Retrieve paginated list of active non-pruned docsets with active documents."""
+    conditions = [
+        Docset.deleted_at.is_(None),
+        Docset.document_count > 0,
+    ]
+    count_stmt = select(func.count(Docset.name)).where(*conditions)
+    count_res = await session.execute(count_stmt)
+    total = count_res.scalar() or 0
+
+    data_stmt = select(Docset).where(*conditions).order_by(Docset.name.asc()).limit(limit).offset(offset)
+    data_res = await session.execute(data_stmt)
+    docsets = list(data_res.scalars().all())
+
+    return total, docsets
+
+
+async def delete_docset(session: AsyncSession, docset_name: str) -> int:
+    """Soft-delete all active documents in a docset and prune the docset.
+
+    Raises DocsetNotFoundError if docset does not exist, is already pruned, or has no active documents.
+    """
+    statement = select(Docset).where(Docset.name == docset_name, Docset.deleted_at.is_(None))
+    res = await session.execute(statement)
+    docset_record = res.scalars().first()
+    if docset_record is None or docset_record.document_count == 0:
+        raise DocsetNotFoundError(f"Docset '{docset_name}' not found or has no active documents")
+
+    now = datetime.now(UTC)
+    doc_stmt = select(Document).where(Document.docset == docset_name, Document.deleted_at.is_(None))
+    doc_res = await session.execute(doc_stmt)
+    active_docs = doc_res.scalars().all()
+
+    for doc in active_docs:
+        doc.deleted_at = now
+        doc.updated_at = now
+        session.add(doc)
+
+    docset_record.deleted_at = now
+    docset_record.document_count = 0
+    docset_record.updated_at = now
+    session.add(docset_record)
+
+    await session.commit()
+    return len(active_docs)

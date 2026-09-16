@@ -17,13 +17,13 @@
 
 ## 3. Database Repository Layer
 
-- [ ] 3.1 Implement docset name normalization and validation helper (enforcing lowercase, 1-64 chars, `^[a-z0-9_-]+$`, and rejecting `"default"`).
-- [ ] 3.2 Update `check_active_url` and `create_batch_and_jobs` in `app/services/repository.py` to scope uniqueness and skipping to `(docset, source_url)`.
-- [ ] 3.3 Implement docset auto-creation and revival in `create_batch_and_jobs`.
-- [ ] 3.4 Implement soft-deleted document re-activation upon re-submission within the same docset.
-- [ ] 3.5 Implement `list_active_docsets` and `delete_docset` repository functions with auto-pruning.
-- [ ] 3.6 Update `list_indexed_documents` and `soft_delete_document` to be scoped to docset and trigger auto-pruning when remaining active document count reaches zero.
-- [ ] 3.7 Add comprehensive repository tests in `tests/test_repository.py`.
+- [x] 3.1 Implement docset name normalization and validation helper (enforcing lowercase, 1-64 chars, `^[a-z0-9_-]+$`, and rejecting `"default"`).
+- [x] 3.2 Update `check_active_url` and `create_batch_and_jobs` in `app/services/repository.py` to scope uniqueness and skipping to `(docset, source_url)`.
+- [x] 3.3 Implement docset auto-creation and revival in `create_batch_and_jobs`.
+- [x] 3.4 Implement soft-deleted document re-activation upon re-submission within the same docset.
+- [x] 3.5 Implement `list_active_docsets` and `delete_docset` repository functions with auto-pruning.
+- [x] 3.6 Update `list_indexed_documents` and `soft_delete_document` to be scoped to docset and trigger auto-pruning when remaining active document count reaches zero.
+- [x] 3.7 Add comprehensive repository tests in `tests/test_repository.py`.
 
 ## 4. Pipeline Orchestration & Concurrency Guard
 
