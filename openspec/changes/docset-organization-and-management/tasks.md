@@ -43,6 +43,6 @@
 
 ## 6. Verification & Documentation
 
-- [ ] 6.1 Update `README.md` with new docset architecture, API endpoints, and curl examples.
-- [ ] 6.2 Run full test suite with coverage enforcement (`pytest --cov=app --cov-report=term-missing --cov-fail-under=100`).
-- [ ] 6.3 Run linting and format checks (`ruff check .`, `ruff format --check .`).
+- [x] 6.1 Update `README.md` with new docset architecture, API endpoints, and curl examples.
+- [x] 6.2 Run full test suite with coverage enforcement (`pytest --cov=app --cov-report=term-missing --cov-fail-under=100`).
+- [x] 6.3 Run linting and format checks (`ruff check .`, `ruff format --check .`).

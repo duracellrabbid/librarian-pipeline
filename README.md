@@ -29,6 +29,7 @@ rag-ingestion-pipeline/
 │   │   ├── schemas.py    # Pydantic request and response schemas
 │   │   └── v1/           # API version 1 router and endpoints
 │   │       └── endpoints/
+│   │           ├── docsets.py   # Docset management, batch ingestion, scoped search & deletion
 │   │           └── documents.py # Document ingestion, status, list, check, delete
 │   ├── core/         # Settings, security & domain validation, logging, dispatcher protocol
 │   ├── models/       # SQLModel database tables and domain entities
@@ -57,15 +58,24 @@ rag-ingestion-pipeline/
 
 ### Entity Relationship & Schema
 
-- **`Document`**: Represents registered ingestion targets with audit fields and non-destructive soft deletes.
-  - Enforces a PostgreSQL conditional unique index `uq_documents_active_source_url` on `source_url WHERE deleted_at IS NULL`, preventing active duplicates while permitting re-ingestion after soft deletion.
+- **`Docset`**: Groups documents into isolated, human-readable collections. Tracks active `document_count` and soft-delete state (`deleted_at`). Auto-pruned when document count drops to zero.
+- **`Document`**: Represents registered ingestion targets scoped to a `docset` with audit fields and non-destructive soft deletes.
+  - Enforces a composite conditional unique index `uq_documents_active_docset_source_url` on `(docset, source_url) WHERE deleted_at IS NULL`, allowing identical URLs in different docsets while preventing duplicates within the same docset.
 - **`BatchIngestionJob`**: Represents a batch submission request tracking aggregate batch status, total/accepted/skipped document counts, and skipped document details.
 - **`IngestionJob`**: Represents individual background ingestion jobs associated with a document and grouped under a `BatchIngestionJob`.
 
 ```mermaid
 erDiagram
+    Docset ||--o{ Document : "contains"
     BatchIngestionJob ||--o{ IngestionJob : "groups"
     Document ||--o{ IngestionJob : "tracks execution"
+    Docset {
+        string name PK "1-64 chars"
+        int document_count
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at "Soft delete / prune marker"
+    }
     BatchIngestionJob {
         uuid id PK
         string status "Indexed"
@@ -78,8 +88,9 @@ erDiagram
     }
     Document {
         uuid id PK
+        string docset FK "References docsets.name"
         string source_type
-        string source_url "Index & Partial Unique"
+        string source_url "Index & Composite Partial Unique"
         string content_hash
         string title
         int chunk_count
@@ -591,6 +602,129 @@ Retrieves a paginated list of documents currently actively indexed in PostgreSQL
 
   # Filter by query with custom pagination
   curl -X GET "http://localhost:8000/api/v1/documents?query=intelligence&limit=10&offset=0"
+  ```
+
+### Docset Management & Scoped Document Endpoints (`/api/v1/docsets`)
+
+Docsets partition documents into isolated, human-readable collections (1-64 characters matching `^[a-z0-9_-]+$`).
+
+#### 1. Ingest Documents into Docset (`POST /api/v1/docsets/{docset}/documents`)
+
+Submits a batch of URLs for asynchronous ingestion scoped to the specified `docset`. If the docset does not exist or was previously pruned, it is automatically created or revived. The reserved keyword `"default"` is restricted and cannot be ingested into directly.
+
+- **Path Parameters**:
+  - `docset` (string): Normalized docset name (1-64 chars, alphanumeric, `-`, `_`).
+- **Request Body**: Same as batch ingest (`IngestRequest`).
+- **Responses**:
+  - `202 Accepted`: Same as batch ingest (`IngestResponse`).
+  - `400 Bad Request`: When targeting the reserved `"default"` docset name.
+  - `422 Unprocessable Entity`: Invalid docset name pattern or batch limit exceeded.
+- **Example `curl`**:
+  ```bash
+  curl -X POST "http://localhost:8000/api/v1/docsets/ml-papers/documents" \
+    -H "Content-Type: application/json" \
+    -d '{"documents": [{"url": "https://en.wikipedia.org/wiki/Deep_learning", "title": "Deep Learning"}]}'
+  ```
+
+#### 2. List Active Docsets (`GET /api/v1/docsets`)
+
+Retrieves a paginated list of all active non-empty docsets (`document_count > 0` and `deleted_at IS NULL`).
+
+- **Query Parameters**:
+  - `limit` (integer, optional, default: `20`, range: `1`-`100`).
+  - `offset` (integer, optional, default: `0`, minimum: `0`).
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "total": 2,
+      "limit": 20,
+      "offset": 0,
+      "items": [
+        {
+          "name": "coding-docs",
+          "document_count": 12,
+          "created_at": "2026-09-16T10:00:00Z",
+          "updated_at": "2026-09-16T10:05:00Z"
+        },
+        {
+          "name": "ml-papers",
+          "document_count": 5,
+          "created_at": "2026-09-16T10:10:00Z",
+          "updated_at": "2026-09-16T10:12:00Z"
+        }
+      ]
+    }
+    ```
+- **Example `curl`**:
+  ```bash
+  curl -X GET "http://localhost:8000/api/v1/docsets?limit=10&offset=0"
+  ```
+
+#### 3. Delete Docset & Purge Vectors (`DELETE /api/v1/docsets/{docset}`)
+
+Soft-deletes all member documents in PostgreSQL, prunes the docset (`deleted_at = NOW()`, `document_count = 0`), and purges all associated vector points in Qdrant matching `docset == {docset}`.
+
+- **Path Parameters**:
+  - `docset` (string): Name of docset to delete.
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "docset": "ml-papers",
+      "status": "deleted",
+      "deleted_document_count": 5,
+      "message": "Docset and associated vectors successfully deleted"
+    }
+    ```
+  - `400 Bad Request`: If attempting to delete the reserved `"default"` docset.
+  - `404 Not Found`: Docset not found or already pruned.
+- **Example `curl`**:
+  ```bash
+  curl -X DELETE "http://localhost:8000/api/v1/docsets/ml-papers"
+  ```
+
+#### 4. List Indexed Documents in Docset (`GET /api/v1/docsets/{docset}/documents`)
+
+Retrieves a paginated list of indexed documents belonging strictly to the specified `docset`.
+
+- **Path Parameters**:
+  - `docset` (string): Target docset.
+- **Query Parameters**:
+  - `limit` (integer, default: `20`), `offset` (integer, default: `0`), `query` (optional string search).
+- **Responses**:
+  - `200 OK`: `DocumentListResponse` scoped to the docset.
+- **Example `curl`**:
+  ```bash
+  curl -X GET "http://localhost:8000/api/v1/docsets/ml-papers/documents?query=deep"
+  ```
+
+#### 5. Check Document URL in Docset (`GET /api/v1/docsets/{docset}/documents/check`)
+
+Checks whether a URL is actively indexed in the specified `docset`.
+
+- **Query Parameters**:
+  - `url` (string, required): Source URL to check.
+- **Responses**:
+  - `200 OK`: `{"exists": true, "doc_id": "...", "status": "INDEXED"}` or `{"exists": false, "doc_id": null, "status": null}`.
+- **Example `curl`**:
+  ```bash
+  curl -X GET "http://localhost:8000/api/v1/docsets/ml-papers/documents/check?url=https://en.wikipedia.org/wiki/Deep_learning"
+  ```
+
+#### 6. Delete Document from Docset (`DELETE /api/v1/docsets/{docset}/documents/{doc_id}`)
+
+Soft-deletes a single document in the specified docset and purges its vector embeddings from Qdrant. If this document was the last remaining active document in the docset, the docset is automatically pruned (`document_count = 0`, `deleted_at = NOW()`).
+
+- **Path Parameters**:
+  - `docset` (string): Target docset.
+  - `doc_id` (UUID): Document ID.
+- **Responses**:
+  - `200 OK`: `DeleteResponse`.
+  - `404 Not Found`: If document does not exist or is not active in the specified docset.
+- **Example `curl`**:
+  ```bash
+  curl -X DELETE "http://localhost:8000/api/v1/docsets/ml-papers/documents/0d635fc2-d1d4-4cf5-94cf-6c0756778f28"
   ```
 
 ---
