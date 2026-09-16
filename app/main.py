@@ -15,9 +15,12 @@ from app.core.db import engine
 from app.core.exceptions import DispatcherError, PipelineError, VectorStoreError
 from app.core.logging import setup_logging
 from app.services.repository import (
+    DocsetNotFoundError,
     DocumentNotFoundError,
     DuplicateActiveURLError,
+    InvalidDocsetNameError,
     JobNotFoundError,
+    ReservedDocsetNameError,
 )
 from app.services.vector_store.qdrant import QdrantVectorStore
 from app.workers.dispatcher import ArqTaskDispatcher
@@ -92,6 +95,36 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": str(exc)},
+        )
+
+    @app.exception_handler(DocsetNotFoundError)
+    async def handle_docset_not_found(
+        request: Request,
+        exc: DocsetNotFoundError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": str(exc)},
+        )
+
+    @app.exception_handler(InvalidDocsetNameError)
+    async def handle_invalid_docset_name(
+        request: Request,
+        exc: InvalidDocsetNameError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": str(exc)},
+        )
+
+    @app.exception_handler(ReservedDocsetNameError)
+    async def handle_reserved_docset_name(
+        request: Request,
+        exc: ReservedDocsetNameError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
             content={"detail": str(exc)},
         )
 

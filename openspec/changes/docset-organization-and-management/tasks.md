@@ -34,12 +34,12 @@
 
 ## 5. REST API Schemas & Endpoints
 
-- [ ] 5.1 Define Pydantic request/response schemas in `app/api/schemas.py` for docset listing (`DocsetListItemResponse`, `DocsetListResponse`) and docset deletion.
-- [ ] 5.2 Implement `POST /docsets/{docset}/documents` batch ingestion endpoint with auto-creation and reserved-name validation.
-- [ ] 5.3 Implement `GET /docsets` and `DELETE /docsets/{docset}` endpoints.
-- [ ] 5.4 Implement `GET /docsets/{docset}/documents`, `GET /docsets/{docset}/documents/check`, and `DELETE /docsets/{docset}/documents/{doc_id}` endpoints.
-- [ ] 5.5 Mount docsets router in `app/api/v1/router.py`.
-- [ ] 5.6 Add comprehensive API endpoint tests in `tests/test_api_docsets.py`.
+- [x] 5.1 Define Pydantic request/response schemas in `app/api/schemas.py` for docset listing (`DocsetListItemResponse`, `DocsetListResponse`) and docset deletion.
+- [x] 5.2 Implement `POST /docsets/{docset}/documents` batch ingestion endpoint with auto-creation and reserved-name validation.
+- [x] 5.3 Implement `GET /docsets` and `DELETE /docsets/{docset}` endpoints.
+- [x] 5.4 Implement `GET /docsets/{docset}/documents`, `GET /docsets/{docset}/documents/check`, and `DELETE /docsets/{docset}/documents/{doc_id}` endpoints.
+- [x] 5.5 Mount docsets router in `app/api/v1/router.py`.
+- [x] 5.6 Add comprehensive API endpoint tests in `tests/test_api_docsets.py`.
 
 ## 6. Verification & Documentation
 

@@ -210,3 +210,42 @@ class DocumentListResponse(BaseModel):
         default_factory=list,
         description="List of indexed document records",
     )
+
+
+class DocsetListItemResponse(BaseModel):
+    """Specification of an active docset within a paginated list."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str = Field(description="Normalized docset identifier")
+    document_count: int = Field(ge=0, description="Active document count")
+    created_at: datetime = Field(description="Timestamp when docset was created")
+    updated_at: datetime = Field(description="Timestamp when docset was last updated")
+
+
+class DocsetListResponse(BaseModel):
+    """Paginated list of active docsets."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    total: int = Field(default=0, ge=0, description="Total number of matching active docsets")
+    limit: int = Field(default=20, ge=1, le=100, description="Page limit applied to query")
+    offset: int = Field(default=0, ge=0, description="Offset applied to query")
+    items: list[DocsetListItemResponse] = Field(
+        default_factory=list,
+        description="List of active docset records",
+    )
+
+
+class DocsetDeleteResponse(BaseModel):
+    """Response returned upon deleting a docset and purging member documents and vectors."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    docset: str = Field(description="Normalized identifier of the deleted docset")
+    status: str = Field(default="deleted", description="Operation outcome status")
+    deleted_document_count: int = Field(ge=0, description="Number of soft-deleted documents")
+    message: str = Field(
+        default="Docset and associated vectors successfully deleted",
+        description="Human-readable confirmation message",
+    )

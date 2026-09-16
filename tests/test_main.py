@@ -10,9 +10,12 @@ from app.core.config import settings
 from app.core.exceptions import DispatcherError, PipelineError, VectorStoreError
 from app.main import app, create_app, lifespan
 from app.services.repository import (
+    DocsetNotFoundError,
     DocumentNotFoundError,
     DuplicateActiveURLError,
+    InvalidDocsetNameError,
     JobNotFoundError,
+    ReservedDocsetNameError,
 )
 from httpx import ASGITransport, AsyncClient
 from loguru import logger
@@ -249,6 +252,48 @@ class TestExceptionHandlers:
             resp = await client.get("/test-pipeline-error")
             assert resp.status_code == 500
             assert resp.json()["detail"] == "Unexpected pipeline failure"
+
+    @pytest.mark.asyncio
+    async def test_docset_not_found_handler(self) -> None:
+        test_app = create_app()
+
+        @test_app.get("/test-docset-not-found")
+        async def raise_docset_not_found():
+            raise DocsetNotFoundError("Docset not found")
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp = await client.get("/test-docset-not-found")
+            assert resp.status_code == 404
+            assert resp.json()["detail"] == "Docset not found"
+
+    @pytest.mark.asyncio
+    async def test_invalid_docset_name_handler(self) -> None:
+        test_app = create_app()
+
+        @test_app.get("/test-invalid-docset-name")
+        async def raise_invalid_docset():
+            raise InvalidDocsetNameError("Invalid docset name")
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp = await client.get("/test-invalid-docset-name")
+            assert resp.status_code == 422
+            assert resp.json()["detail"] == "Invalid docset name"
+
+    @pytest.mark.asyncio
+    async def test_reserved_docset_name_handler(self) -> None:
+        test_app = create_app()
+
+        @test_app.get("/test-reserved-docset-name")
+        async def raise_reserved_docset():
+            raise ReservedDocsetNameError("Reserved docset name")
+
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp = await client.get("/test-reserved-docset-name")
+            assert resp.status_code == 400
+            assert resp.json()["detail"] == "Reserved docset name"
 
 
 class TestRequestIdMiddleware:
