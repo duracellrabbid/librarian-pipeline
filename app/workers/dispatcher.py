@@ -76,6 +76,7 @@ class ArqTaskDispatcher:
         job_id: UUID,
         document_id: UUID,
         url: str,
+        docset: str = "default",
     ) -> None:
         """Enqueue an ingestion job for background processing.
 
@@ -83,6 +84,7 @@ class ArqTaskDispatcher:
             job_id: Unique identifier of the ingestion job.
             document_id: Unique identifier of the document record.
             url: Web URL to process.
+            docset: Normalized docset identifier.
 
         Raises:
             DispatcherError: If Redis connection fails or job cannot be enqueued.
@@ -94,6 +96,7 @@ class ArqTaskDispatcher:
                 str(job_id),
                 str(document_id),
                 url,
+                docset,
                 _job_id=str(job_id),
             )
         except Exception as e:

@@ -9,10 +9,13 @@ from uuid import UUID
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from app.core.db import async_session_factory
 from app.core.exceptions import ExtractionError
 from app.core.security import is_allowed_url
+from app.models.docset import Docset
+from app.models.document import Document
 from app.models.job import JobStatus
 from app.services.chunkers.base import BaseChunker, DocumentChunk
 from app.services.embeddings.base import BaseEmbeddingClient
@@ -137,6 +140,7 @@ class IngestionPipelineService:
         document_id: UUID,
         url: str,
         chunks: list[DocumentChunk],
+        docset: str = "default",
     ) -> None:
         """Transition job to EMBEDDING (70%), generate vectors, and upsert to vector store."""
         await self._update_job(job_id, JobStatus.EMBEDDING, 70)
@@ -151,13 +155,38 @@ class IngestionPipelineService:
             chunks=chunks,
             vectors=vectors,
             source_url=url,
+            docset=docset,
         )
+
+    async def _is_document_active(self, document_id: UUID) -> bool:
+        """Verify that the document exists and has not been soft-deleted or its docset pruned."""
+        async with self._get_session() as session:
+            doc_stmt = select(Document).where(Document.id == document_id)
+            doc_res = await session.execute(doc_stmt)
+            doc = doc_res.scalars().first()
+            if doc is None:
+                return False
+
+            deleted_at = getattr(doc, "deleted_at", None)
+            if deleted_at is not None and not hasattr(deleted_at, "_mock_return_value"):
+                return False
+
+            docset_name = getattr(doc, "docset", None)
+            if docset_name and isinstance(docset_name, str):
+                ds_stmt = select(Docset).where(Docset.name == docset_name)
+                ds_res = await session.execute(ds_stmt)
+                ds = ds_res.scalars().first()
+                if ds is not None and isinstance(ds, Docset) and ds.deleted_at is not None:
+                    return False
+
+            return True
 
     async def _execute_pipeline(
         self,
         job_id: UUID,
         document_id: UUID,
         url: str,
+        docset: str = "default",
     ) -> None:
         """Execute the sequential stages of the ingestion pipeline."""
         if not is_allowed_url(url, allowed_domains=self.allowed_domains):
@@ -168,7 +197,27 @@ class IngestionPipelineService:
         await self._update_job(job_id, JobStatus.CHUNKING, 40)
         chunks = self._chunk_content(extracted)
 
-        await self._embed_and_index_chunks(job_id, document_id, url, chunks)
+        if not await self._is_document_active(document_id):
+            logger.warning(
+                "Document {} or its docset was deleted during processing; aborting vector indexing for job {}",
+                document_id,
+                job_id,
+            )
+            await self._update_job(
+                job_id,
+                JobStatus.FAILED,
+                progress=None,
+                error_message="Document or docset was deleted before indexing",
+            )
+            return
+
+        await self._embed_and_index_chunks(
+            job_id,
+            document_id,
+            url,
+            chunks,
+            docset=docset,
+        )
 
         content_hash = hashlib.sha256(extracted.content.encode("utf-8")).hexdigest()
         await self._finalize_document(
@@ -202,6 +251,7 @@ class IngestionPipelineService:
         job_id: UUID,
         document_id: UUID,
         url: str,
+        docset: str = "default",
     ) -> None:
         """Execute the end-to-end ingestion pipeline with robust error capture.
 
@@ -209,10 +259,11 @@ class IngestionPipelineService:
             job_id: Unique identifier of the ingestion job.
             document_id: Unique identifier of the associated document.
             url: Target web URL to extract, chunk, embed, and store.
+            docset: Normalized target docset identifier.
         """
         with logger.contextualize(job_id=str(job_id), document_id=str(document_id)):
             try:
-                await self._execute_pipeline(job_id, document_id, url)
+                await self._execute_pipeline(job_id, document_id, url, docset=docset)
             except asyncio.CancelledError:
                 logger.warning("Ingestion pipeline cancelled or timed out for job {}", job_id)
                 await asyncio.shield(

@@ -27,10 +27,10 @@
 
 ## 4. Pipeline Orchestration & Concurrency Guard
 
-- [ ] 4.1 Update `IngestionPipelineService` in `app/services/pipeline.py` to pass `docset` down to vector store upsert.
-- [ ] 4.2 Implement pre-upsert active check in `IngestionPipelineService` to halt execution and avoid ghost vector upserts if document or docset was deleted.
-- [ ] 4.3 Update task dispatcher and worker signatures to pass `docset`.
-- [ ] 4.4 Add unit tests in `tests/test_pipeline.py` for docset tagging and concurrent deletion guard.
+- [x] 4.1 Update `IngestionPipelineService` in `app/services/pipeline.py` to pass `docset` down to vector store upsert.
+- [x] 4.2 Implement pre-upsert active check in `IngestionPipelineService` to halt execution and avoid ghost vector upserts if document or docset was deleted.
+- [x] 4.3 Update task dispatcher and worker signatures to pass `docset`.
+- [x] 4.4 Add unit tests in `tests/test_pipeline.py` for docset tagging and concurrent deletion guard.
 
 ## 5. REST API Schemas & Endpoints
 

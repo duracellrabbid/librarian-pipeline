@@ -68,6 +68,7 @@ async def ingest_document(
                     job_id=job.id,
                     document_id=doc.id,
                     url=doc.source_url,
+                    docset=doc.docset,
                 )
                 for doc, job in accepted_pairs
             )

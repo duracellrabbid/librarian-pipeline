@@ -58,6 +58,7 @@ async def run_ingestion_pipeline(
     job_id: str | UUID,
     document_id: str | UUID,
     url: str,
+    docset: str = "default",
 ) -> None:
     """Task function executing the document ingestion pipeline in the background.
 
@@ -66,6 +67,7 @@ async def run_ingestion_pipeline(
         job_id: Ingestion job unique identifier.
         document_id: Associated document unique identifier.
         url: Web URL to extract and process.
+        docset: Target docset identifier.
     """
     parsed_job_id = coerce_uuid(job_id)
     parsed_doc_id = coerce_uuid(document_id)
@@ -89,6 +91,7 @@ async def run_ingestion_pipeline(
             job_id=parsed_job_id,
             document_id=parsed_doc_id,
             url=url,
+            docset=docset,
         )
 
 

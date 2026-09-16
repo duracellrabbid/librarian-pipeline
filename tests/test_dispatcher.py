@@ -77,13 +77,14 @@ async def test_arq_task_dispatcher_enqueue_success() -> None:
     doc_id = uuid4()
     url = "https://example.com/docs"
 
-    await dispatcher.enqueue_ingestion_job(job_id=job_id, document_id=doc_id, url=url)
+    await dispatcher.enqueue_ingestion_job(job_id=job_id, document_id=doc_id, url=url, docset="custom-kb")
 
     mock_pool.enqueue_job.assert_awaited_once_with(
         "run_ingestion_pipeline",
         str(job_id),
         str(doc_id),
         url,
+        "custom-kb",
         _job_id=str(job_id),
     )
 
@@ -245,12 +246,13 @@ async def test_run_ingestion_pipeline_with_ctx_service() -> None:
     url = "https://example.com/article"
 
     # Pass as string IDs to test deserialization/coercion
-    await run_ingestion_pipeline(ctx, str(job_id), str(doc_id), url)
+    await run_ingestion_pipeline(ctx, str(job_id), str(doc_id), url, docset="custom-kb")
 
     mock_service.run.assert_awaited_once_with(
         job_id=job_id,
         document_id=doc_id,
         url=url,
+        docset="custom-kb",
     )
 
 
@@ -270,6 +272,7 @@ async def test_run_ingestion_pipeline_with_uuid_instances() -> None:
         job_id=job_id,
         document_id=doc_id,
         url=url,
+        docset="default",
     )
 
 
@@ -315,6 +318,7 @@ async def test_run_ingestion_pipeline_instantiates_service_when_imported() -> No
             job_id=job_id,
             document_id=doc_id,
             url="https://example.com",
+            docset="default",
         )
 
 
@@ -330,6 +334,7 @@ async def test_run_ingestion_pipeline_instantiates_real_service() -> None:
             job_id=job_id,
             document_id=doc_id,
             url="https://example.com",
+            docset="default",
         )
 
 

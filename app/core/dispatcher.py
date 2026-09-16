@@ -13,6 +13,7 @@ class TaskDispatcher(Protocol):
         job_id: UUID,
         document_id: UUID,
         url: str,
+        docset: str = "default",
     ) -> None:
         """Enqueue an ingestion job for background processing.
 
@@ -20,6 +21,7 @@ class TaskDispatcher(Protocol):
             job_id: Unique identifier of the ingestion job.
             document_id: Unique identifier of the associated document.
             url: Web URL to be scraped and indexed.
+            docset: Normalized docset identifier.
 
         Raises:
             DispatcherError: If the queue broker is unreachable or enqueueing fails.
