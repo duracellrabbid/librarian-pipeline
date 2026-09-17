@@ -35,6 +35,7 @@ class IngestionPipelineService:
         vector_store: BaseVectorStore | None = None,
         session_factory: Callable[..., Any] | None = None,
         allowed_domains: list[str] | None = None,
+        rate_limiter: Any | None = None,
     ) -> None:
         """Initialize the ingestion pipeline service with injected dependencies.
 
@@ -45,8 +46,9 @@ class IngestionPipelineService:
             vector_store: Vector store adapter instance.
             session_factory: Factory returning an async database session.
             allowed_domains: Optional domain allowlist for defense-in-depth URL validation.
+            rate_limiter: Optional domain concurrency rate limiter instance for extractor.
         """
-        self.extractor = extractor or self._default_extractor()
+        self.extractor = extractor or self._default_extractor(rate_limiter=rate_limiter)
         self.chunker = chunker or self._default_chunker()
         self.embedding_client = embedding_client or self._default_embedding_client()
         self.vector_store = vector_store or self._default_vector_store()
@@ -54,11 +56,11 @@ class IngestionPipelineService:
         self.allowed_domains = allowed_domains
 
     @staticmethod
-    def _default_extractor() -> BaseExtractor:
+    def _default_extractor(rate_limiter: Any | None = None) -> BaseExtractor:
         """Lazily initialize the default Crawl4AIExtractor."""
         from app.services.extractors.web import Crawl4AIExtractor
 
-        return Crawl4AIExtractor()
+        return Crawl4AIExtractor(rate_limiter=rate_limiter)
 
     @staticmethod
     def _default_chunker() -> BaseChunker:

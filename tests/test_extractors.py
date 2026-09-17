@@ -370,3 +370,343 @@ async def test_crawl4ai_extractor_custom_registry():
     extractor = Crawl4AIExtractor(registry=custom_registry, crawler=mock_crawler)
     doc = await extractor.extract("https://en.wikipedia.org/wiki/Custom_Reg")
     assert doc.title == "Custom Registry"
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_retry_on_429_success(monkeypatch):
+    """Test retry sequence on HTTP 429 rate limit that succeeds on subsequent attempt."""
+    sleep_calls = []
+
+    async def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    mock_res_429 = MagicMock()
+    mock_res_429.success = False
+    mock_res_429.status_code = 429
+    mock_res_429.error_message = "Rate limited"
+    mock_res_429.response_headers = {}
+
+    mock_res_200 = MagicMock()
+    mock_res_200.success = True
+    mock_res_200.status_code = 200
+    mock_res_200.markdown = "# Success\n\nBody content."
+    mock_res_200.metadata = {"title": "Success"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.side_effect = [mock_res_429, mock_res_200]
+
+    extractor = Crawl4AIExtractor(
+        crawler=mock_crawler,
+        max_retries=2,
+        backoff_factor=1.0,
+        user_agent="CustomTestBot/1.0",
+    )
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/Retry429")
+    assert doc.title == "Success"
+    assert mock_crawler.arun.await_count == 2
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] >= 1.0
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_retry_on_5xx_success(monkeypatch):
+    """Test retry sequence on HTTP 503 error that succeeds on subsequent attempt."""
+    sleep_calls = []
+
+    async def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    mock_res_503 = MagicMock()
+    mock_res_503.success = False
+    mock_res_503.status_code = 503
+    mock_res_503.error_message = "Service Unavailable"
+    mock_res_503.response_headers = {}
+
+    mock_res_200 = MagicMock()
+    mock_res_200.success = True
+    mock_res_200.status_code = 200
+    mock_res_200.markdown = "# Recovered\n\nBody content."
+    mock_res_200.metadata = {"title": "Recovered"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.side_effect = [mock_res_503, mock_res_200]
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler, max_retries=2, backoff_factor=1.0)
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/Retry503")
+    assert doc.title == "Recovered"
+    assert mock_crawler.arun.await_count == 2
+    assert len(sleep_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_retry_on_network_timeout(monkeypatch):
+    """Test retry sequence on Playwright/network timeout exception."""
+    sleep_calls = []
+
+    async def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    mock_res_200 = MagicMock()
+    mock_res_200.success = True
+    mock_res_200.status_code = 200
+    mock_res_200.markdown = "# After Timeout\n\nBody content."
+    mock_res_200.metadata = {"title": "After Timeout"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.side_effect = [TimeoutError("Page navigation timed out"), mock_res_200]
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler, max_retries=2)
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/Timeout")
+    assert doc.title == "After Timeout"
+    assert mock_crawler.arun.await_count == 2
+    assert len(sleep_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_retry_exhaustion_5xx(monkeypatch):
+    """Test retry exhaustion on persistent 5xx errors raises ExtractionError."""
+    monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+    mock_res_500 = MagicMock()
+    mock_res_500.success = False
+    mock_res_500.status_code = 500
+    mock_res_500.error_message = "Internal Server Error"
+    mock_res_500.response_headers = {}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.return_value = mock_res_500
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler, max_retries=2)
+    with pytest.raises(ExtractionError) as exc_info:
+        await extractor.extract("https://en.wikipedia.org/wiki/Persistent500")
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.url == "https://en.wikipedia.org/wiki/Persistent500"
+    assert "Internal Server Error" in str(exc_info.value)
+    assert mock_crawler.arun.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_fast_fail_on_4xx_client_error():
+    """Test non-retriable 4xx client errors fail immediately without retry."""
+    mock_res_404 = MagicMock()
+    mock_res_404.success = False
+    mock_res_404.status_code = 404
+    mock_res_404.error_message = "Not Found"
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.return_value = mock_res_404
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler, max_retries=3)
+    with pytest.raises(ExtractionError) as exc_info:
+        await extractor.extract("https://en.wikipedia.org/wiki/NotFound")
+
+    assert exc_info.value.status_code == 404
+    assert mock_crawler.arun.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_retry_after_within_cap(monkeypatch):
+    """Test HTTP 429 with Retry-After header within cap pauses for header interval."""
+    sleep_calls = []
+
+    async def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    mock_res_429 = MagicMock()
+    mock_res_429.success = False
+    mock_res_429.status_code = 429
+    mock_res_429.error_message = "Rate limited"
+    mock_res_429.response_headers = {"retry-after": "5"}
+
+    mock_res_200 = MagicMock()
+    mock_res_200.success = True
+    mock_res_200.status_code = 200
+    mock_res_200.markdown = "# Allowed\n\nContent"
+    mock_res_200.metadata = {"title": "Allowed"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.side_effect = [mock_res_429, mock_res_200]
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler, max_retries=2, max_retry_delay=60.0)
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/RetryAfter")
+    assert doc.title == "Allowed"
+    assert mock_crawler.arun.await_count == 2
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] >= 5.0
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_retry_after_http_date_format(monkeypatch):
+    """Test HTTP 429 with Retry-After in HTTP-date format parses correctly."""
+    from datetime import UTC, datetime, timedelta
+
+    sleep_calls = []
+
+    async def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    future_dt = datetime.now(UTC) + timedelta(seconds=10)
+    date_str = future_dt.strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+    mock_res_429 = MagicMock()
+    mock_res_429.success = False
+    mock_res_429.status_code = 429
+    mock_res_429.error_message = "Rate limited"
+    mock_res_429.response_headers = {"Retry-After": date_str}
+
+    mock_res_200 = MagicMock()
+    mock_res_200.success = True
+    mock_res_200.status_code = 200
+    mock_res_200.markdown = "# Date OK\n\nContent"
+    mock_res_200.metadata = {"title": "Date OK"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.side_effect = [mock_res_429, mock_res_200]
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler, max_retries=2, max_retry_delay=60.0)
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/DateHeader")
+    assert doc.title == "Date OK"
+    assert len(sleep_calls) == 1
+    assert 8.0 <= sleep_calls[0] <= 12.0
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_retry_after_exceeds_cap_fails_fast(monkeypatch):
+    """Test HTTP 429 with Retry-After exceeding max_retry_delay fails fast without waiting."""
+    mock_sleep = AsyncMock()
+    monkeypatch.setattr("asyncio.sleep", mock_sleep)
+
+    mock_res_429 = MagicMock()
+    mock_res_429.success = False
+    mock_res_429.status_code = 429
+    mock_res_429.error_message = "Rate limited"
+    mock_res_429.response_headers = {"Retry-After": "3600"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.return_value = mock_res_429
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler, max_retries=3, max_retry_delay=60.0)
+    with pytest.raises(ExtractionError) as exc_info:
+        await extractor.extract("https://en.wikipedia.org/wiki/ExceedsCap")
+
+    assert exc_info.value.status_code == 429
+    assert "exceeds maximum allowed cap" in str(exc_info.value)
+    mock_sleep.assert_not_awaited()
+    assert mock_crawler.arun.await_count == 1
+
+
+def test_crawl4ai_extractor_user_agent_warning_when_default():
+    """Test warning logged when user_agent is not configured."""
+    from loguru import logger
+
+    logs = []
+    handler_id = logger.add(lambda msg: logs.append(msg), level="WARNING")
+    try:
+        _ = Crawl4AIExtractor(user_agent=None)
+        assert any("User-Agent is not explicitly configured" in str(m) for m in logs)
+    finally:
+        logger.remove(handler_id)
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_uses_rate_limiter():
+    """Test that Crawl4AIExtractor acquires the rate limiter during extraction."""
+    from contextlib import asynccontextmanager
+
+    from app.services.extractors.limiter import InProcessDomainRateLimiter
+
+    limiter = InProcessDomainRateLimiter(max_concurrency=1)
+    acquired_urls = []
+
+    orig_acquire = limiter.acquire
+
+    @asynccontextmanager
+    async def track_acquire(url: str):
+        acquired_urls.append(url)
+        async with orig_acquire(url):
+            yield
+
+    limiter.acquire = track_acquire  # type: ignore
+
+    mock_res = MagicMock()
+    mock_res.status_code = 200
+    mock_res.success = True
+    mock_res.markdown = "# Limiter Test\n\nBody"
+    mock_res.metadata = {"title": "Limiter Test"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.return_value = mock_res
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler, rate_limiter=limiter)
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/RateLimitedCall")
+    assert doc.title == "Limiter Test"
+    assert acquired_urls == ["https://en.wikipedia.org/wiki/RateLimitedCall"]
+
+
+def test_wikipedia_strategy_user_agent_and_timeout():
+    """Test WikipediaExtractionStrategy config generation with custom user_agent and page_timeout."""
+    from app.services.extractors.strategies.wikipedia import WikipediaExtractionStrategy
+
+    strategy = WikipediaExtractionStrategy(user_agent="WikiBot/1.0", page_timeout=15.0)
+    run_cfg = strategy.get_run_config()
+    browser_cfg = strategy.get_browser_config()
+
+    assert run_cfg.user_agent == "WikiBot/1.0"
+    assert run_cfg.page_timeout == 15000
+    assert browser_cfg.user_agent == "WikiBot/1.0"
+
+
+def test_crawl4ai_extractor_resolves_user_agent_from_settings(monkeypatch):
+    """Test Crawl4AIExtractor resolves user_agent from settings when omitted in constructor."""
+    monkeypatch.setenv("SCRAPER_USER_AGENT", "FromEnv/1.0")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        extractor = Crawl4AIExtractor(user_agent=None)
+        assert extractor.user_agent == "FromEnv/1.0"
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_extractor_retry_after_malformed_fallback(monkeypatch):
+    """Test HTTP 429 with malformed Retry-After header falls back to exponential backoff."""
+    sleep_calls = []
+
+    async def fake_sleep(seconds: float):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    mock_res_429 = MagicMock()
+    mock_res_429.success = False
+    mock_res_429.status_code = 429
+    mock_res_429.error_message = "Rate limited"
+    mock_res_429.response_headers = {"Retry-After": "not-a-valid-date-or-number"}
+
+    mock_res_200 = MagicMock()
+    mock_res_200.success = True
+    mock_res_200.status_code = 200
+    mock_res_200.markdown = "# Recovered\n\nBody"
+    mock_res_200.metadata = {"title": "Recovered"}
+
+    mock_crawler = AsyncMock()
+    mock_crawler.arun.side_effect = [mock_res_429, mock_res_200]
+
+    extractor = Crawl4AIExtractor(crawler=mock_crawler, max_retries=2, backoff_factor=1.0)
+    doc = await extractor.extract("https://en.wikipedia.org/wiki/MalformedRetryAfter")
+    assert doc.title == "Recovered"
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] >= 1.0

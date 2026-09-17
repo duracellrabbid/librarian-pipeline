@@ -190,10 +190,19 @@ flowchart LR
 - **`WikipediaExtractionStrategy` (`strategies.wikipedia`)**: Strategy implementation for Wikipedia:
   - Excludes navigation, header, footer, references, edit sections, and infoboxes (`nav`, `footer`, `header`, `.vector-header`, `.vector-sidebar`, `#mw-navigation`, `.reference`, `.reflist`, `.mw-editsection`, `.infobox`, `table.infobox`).
   - Strips citation markers (`[1]`, `[note 1]`) and edit links while normalizing whitespace.
+  - Supports configurable `user_agent` and `page_timeout` parameters passed to Crawl4AI configurations.
+- **`InProcessDomainRateLimiter` (`limiter.py`)**: In-process, per-domain concurrency limiter:
+  - Binds active concurrent crawls to any single host domain via `asyncio.Semaphore` (`SCRAPER_MAX_CONCURRENCY_PER_DOMAIN`).
+  - Evaluates domains independently so requests to one host do not starve or block others.
+  - Exception-safe async context manager ensuring immediate semaphore release upon task completion or error.
 - **`ExtractionStrategyRegistry` (`strategies.registry`)**: Registry matching URLs against domain strategies by domain prefix; defaults to singleton via `get_default_strategy_registry()`.
 - **`Crawl4AIExtractor`**: Crawler implementation backed by Crawl4AI's `AsyncWebCrawler`:
   - Resolves tailored domain strategy via `ExtractionStrategyRegistry` based on URL prefix.
-  - Executes crawl with domain-specific `CrawlerRunConfig` and `BrowserConfig`, post-processes markdown with `strategy.clean()`, normalizes metadata, and raises domain `ExtractionError` on non-2xx HTTP responses or crawler failures.
+  - Enforces domain concurrency limits via injected `InProcessDomainRateLimiter`.
+  - **Resilient Retry with Jitter**: Automatically retries transient errors (HTTP 429, 500, 502, 503, 504, network timeouts) using exponential backoff with randomized uniform jitter (`SCRAPER_BACKOFF_FACTOR * 2^attempt + random.uniform(0, 1)`).
+  - **`Retry-After` Header Adherence**: Inspects and parses HTTP `Retry-After` headers (supporting both numeric seconds and RFC HTTP-dates). Enforces a fail-fast cap (`SCRAPER_MAX_RETRY_DELAY`), failing immediately if the requested wait time exceeds the configured threshold.
+  - **Fast Failure**: Fails fast without retrying on non-retriable client errors (HTTP 400, 401, 403, 404, 422) or unmapped domain strategies.
+  - **Polite Bot Identification**: Configures `SCRAPER_USER_AGENT` across browser and crawl runs to comply with Wikimedia/bot policies, emitting an operational warning if not explicitly configured.
 - **Markdown Sanitizer (`cleaning.py`)**:
   - `remove_edit_links`: Strips `[edit]`, `[edit | edit source]`, and edit action links.
   - `remove_citation_markers`: Strips numbered citations (`[1]`, `[12]`) and footnote notes (`[note 1]`, `[citation needed]`) while preserving standard Markdown hyperlinks.
@@ -772,6 +781,12 @@ Key environment configuration variables:
 | `EMBEDDING_MODEL` | `bge-m3` | Embedding model identifier |
 | `EMBEDDING_BATCH_SIZE` | `8` | Chunk batch size per embedding HTTP request |
 | `EMBEDDING_TIMEOUT` | `120.0` | HTTP client request timeout in seconds for embedding generation |
+| `SCRAPER_MAX_RETRIES` | `3` | Maximum retry attempts for transient scraping errors |
+| `SCRAPER_BACKOFF_FACTOR` | `1.5` | Exponential backoff base factor in seconds |
+| `SCRAPER_MAX_RETRY_DELAY` | `60.0` | Maximum backoff delay cap and Retry-After ceiling in seconds |
+| `SCRAPER_MAX_CONCURRENCY_PER_DOMAIN` | `2` | Maximum concurrent active scraping requests permitted per host domain |
+| `SCRAPER_PAGE_TIMEOUT` | `30.0` | Crawler page load timeout per attempt in seconds |
+| `SCRAPER_USER_AGENT` | `RAG-Ingestion-Pipeline/0.1.0...` | Custom User-Agent header identifying scraper bot |
 | `ENVIRONMENT` | `development` | Runtime environment (`development`, `test`, `production`). Gating `/docs`, `/redoc`, `/openapi.json`, and `/health` to non-production only |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 

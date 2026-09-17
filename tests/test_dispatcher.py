@@ -232,7 +232,7 @@ async def test_run_ingestion_pipeline_uses_vector_store_from_ctx() -> None:
         job_id = uuid4()
         doc_id = uuid4()
         await run_ingestion_pipeline(ctx, job_id, doc_id, "https://example.com")
-        mock_service_cls.assert_called_once_with(vector_store=mock_vec)
+        mock_service_cls.assert_called_once_with(vector_store=mock_vec, rate_limiter=None)
 
 
 @pytest.mark.asyncio

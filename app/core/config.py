@@ -90,6 +90,37 @@ class Settings(BaseSettings):
         description="HTTP timeout for embedding generation requests in seconds",
     )
 
+    # Scraper and crawler configuration
+    scraper_max_retries: int = Field(
+        default=3,
+        ge=0,
+        description="Maximum number of retry attempts for transient scraping errors",
+    )
+    scraper_backoff_factor: float = Field(
+        default=1.5,
+        gt=0,
+        description="Exponential backoff base factor in seconds",
+    )
+    scraper_max_retry_delay: float = Field(
+        default=60.0,
+        gt=0,
+        description="Maximum retry delay or Retry-After cap in seconds",
+    )
+    scraper_max_concurrency_per_domain: int = Field(
+        default=2,
+        ge=1,
+        description="Maximum concurrent scraping requests per domain",
+    )
+    scraper_page_timeout: float = Field(
+        default=30.0,
+        gt=0,
+        description="Crawler page load timeout per attempt in seconds",
+    )
+    scraper_user_agent: str | None = Field(
+        default=None,
+        description="Custom User-Agent header identifying the scraper bot",
+    )
+
     def model_post_init(self, __context: Any, /) -> None:
         """Construct dependent connection URLs if not explicitly provided."""
         if not self.database_url:
@@ -110,6 +141,8 @@ class Settings(BaseSettings):
             self.ollama_base_url = f"http://{self.ollama_host}:{self.ollama_port}"
         if self.qdrant_api_key is not None and not self.qdrant_api_key.strip():
             self.qdrant_api_key = None
+        if self.scraper_user_agent is not None and not self.scraper_user_agent.strip():
+            self.scraper_user_agent = None
 
 
 @lru_cache

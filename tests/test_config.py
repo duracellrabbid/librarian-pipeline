@@ -20,6 +20,12 @@ def test_default_settings():
     assert settings.arq_job_timeout == 900
     assert settings.embedding_batch_size == 8
     assert settings.embedding_timeout == 120.0
+    assert settings.scraper_max_retries == 3
+    assert settings.scraper_backoff_factor == 1.5
+    assert settings.scraper_max_retry_delay == 60.0
+    assert settings.scraper_max_concurrency_per_domain == 2
+    assert settings.scraper_page_timeout == 30.0
+    assert settings.scraper_user_agent is None
 
 
 def test_derived_connection_urls():
@@ -56,6 +62,12 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "4")
     monkeypatch.setenv("EMBEDDING_TIMEOUT", "60.0")
     monkeypatch.setenv("ALLOWED_DOMAINS", '["https://example.org"]')
+    monkeypatch.setenv("SCRAPER_MAX_RETRIES", "5")
+    monkeypatch.setenv("SCRAPER_BACKOFF_FACTOR", "2.0")
+    monkeypatch.setenv("SCRAPER_MAX_RETRY_DELAY", "90.0")
+    monkeypatch.setenv("SCRAPER_MAX_CONCURRENCY_PER_DOMAIN", "4")
+    monkeypatch.setenv("SCRAPER_PAGE_TIMEOUT", "45.0")
+    monkeypatch.setenv("SCRAPER_USER_AGENT", "CustomBot/1.0 (test@example.com)")
 
     settings = Settings()
     assert settings.app_name == "custom-pipeline"
@@ -69,6 +81,12 @@ def test_env_override(monkeypatch):
     assert settings.embedding_batch_size == 4
     assert settings.embedding_timeout == 60.0
     assert settings.allowed_domains == ["https://example.org"]
+    assert settings.scraper_max_retries == 5
+    assert settings.scraper_backoff_factor == 2.0
+    assert settings.scraper_max_retry_delay == 90.0
+    assert settings.scraper_max_concurrency_per_domain == 4
+    assert settings.scraper_page_timeout == 45.0
+    assert settings.scraper_user_agent == "CustomBot/1.0 (test@example.com)"
 
 
 def test_invalid_port_validation(monkeypatch):
@@ -134,6 +152,23 @@ def test_empty_qdrant_api_key_normalized_to_none(monkeypatch):
     assert settings_valid.qdrant_api_key == "valid-secret-key"
 
 
+def test_empty_scraper_user_agent_normalized_to_none(monkeypatch):
+    """Verify that empty or whitespace SCRAPER_USER_AGENT is normalized to None."""
+    from app.core.config import Settings
+
+    monkeypatch.setenv("SCRAPER_USER_AGENT", "")
+    settings = Settings()
+    assert settings.scraper_user_agent is None
+
+    monkeypatch.setenv("SCRAPER_USER_AGENT", "   ")
+    settings_ws = Settings()
+    assert settings_ws.scraper_user_agent is None
+
+    monkeypatch.setenv("SCRAPER_USER_AGENT", "CustomBot/1.0")
+    settings_valid = Settings()
+    assert settings_valid.scraper_user_agent == "CustomBot/1.0"
+
+
 def test_invalid_new_settings_validation(monkeypatch):
     """Verify validation error when new settings have non-positive or invalid values."""
     from app.core.config import Settings
@@ -149,6 +184,35 @@ def test_invalid_new_settings_validation(monkeypatch):
 
     monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "8")
     monkeypatch.setenv("EMBEDDING_TIMEOUT", "0")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_scraper_settings_validation(monkeypatch):
+    """Verify validation errors when scraper settings violate constraints."""
+    from app.core.config import Settings
+
+    monkeypatch.setenv("SCRAPER_MAX_RETRIES", "-1")
+    with pytest.raises(ValidationError):
+        Settings()
+
+    monkeypatch.setenv("SCRAPER_MAX_RETRIES", "3")
+    monkeypatch.setenv("SCRAPER_BACKOFF_FACTOR", "0")
+    with pytest.raises(ValidationError):
+        Settings()
+
+    monkeypatch.setenv("SCRAPER_BACKOFF_FACTOR", "1.5")
+    monkeypatch.setenv("SCRAPER_MAX_RETRY_DELAY", "0")
+    with pytest.raises(ValidationError):
+        Settings()
+
+    monkeypatch.setenv("SCRAPER_MAX_RETRY_DELAY", "60.0")
+    monkeypatch.setenv("SCRAPER_MAX_CONCURRENCY_PER_DOMAIN", "0")
+    with pytest.raises(ValidationError):
+        Settings()
+
+    monkeypatch.setenv("SCRAPER_MAX_CONCURRENCY_PER_DOMAIN", "2")
+    monkeypatch.setenv("SCRAPER_PAGE_TIMEOUT", "0")
     with pytest.raises(ValidationError):
         Settings()
 

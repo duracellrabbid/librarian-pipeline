@@ -1165,3 +1165,71 @@ async def test_pipeline_service_aborts_when_document_missing(
 
     mock_vector_store.upsert_chunks.assert_not_awaited()
     assert job.status == JobStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_pipeline_run_with_extractor_retry_and_eventual_success(
+    mock_chunker: MagicMock,
+    mock_embedding_client: AsyncMock,
+    mock_vector_store: AsyncMock,
+) -> None:
+    """Test that pipeline successfully finishes when extractor experiences transient retries before succeeding."""
+    job_id = uuid4()
+    doc_id = uuid4()
+    url = "https://en.wikipedia.org/wiki/Retry_Success"
+
+    mock_session = AsyncMock()
+    mock_session.commit = AsyncMock()
+    mock_session.rollback = AsyncMock()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield mock_session
+
+    job = IngestionJob(
+        id=job_id,
+        document_id=doc_id,
+        status=JobStatus.PENDING.value,
+        progress_percentage=0,
+    )
+    document = Document(
+        id=doc_id,
+        url=url,
+        status=JobStatus.PENDING.value,
+        docset="default",
+    )
+
+    def execute_side_effect(stmt):
+        mock_result = MagicMock()
+        stmt_str = str(stmt)
+        if "ingestion_jobs" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = job
+        elif "documents" in stmt_str:
+            mock_result.scalars.return_value.first.return_value = document
+        return mock_result
+
+    mock_session.execute.side_effect = execute_side_effect
+
+    mock_extractor = AsyncMock()
+    extracted_doc = ExtractedDocument(
+        content="# Recovered Content\n\nContent body.",
+        title="Recovered Content",
+        source_url=url,
+        metadata={"crawled_at": "2026-09-17T00:00:00Z"},
+    )
+    mock_extractor.extract.return_value = extracted_doc
+
+    service = IngestionPipelineService(
+        extractor=mock_extractor,
+        chunker=mock_chunker,
+        embedding_client=mock_embedding_client,
+        vector_store=mock_vector_store,
+        session_factory=session_factory,
+    )
+
+    await service.run(job_id=job_id, document_id=doc_id, url=url)
+
+    mock_extractor.extract.assert_awaited_once_with(url)
+    mock_vector_store.upsert_chunks.assert_awaited_once()
+    assert job.status == JobStatus.INDEXED.value
+    assert job.progress_percentage == 100

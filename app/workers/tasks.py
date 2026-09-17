@@ -38,6 +38,13 @@ async def startup(ctx: dict[str, Any]) -> None:
         ctx["vector_store"] = vector_store
     except Exception as exc:
         logger.warning("Could not initialize Qdrant vector store in worker startup: {}", exc)
+    try:
+        from app.services.extractors.limiter import InProcessDomainRateLimiter
+
+        rate_limiter = InProcessDomainRateLimiter(max_concurrency=settings.scraper_max_concurrency_per_domain)
+        ctx["rate_limiter"] = rate_limiter
+    except Exception as exc:
+        logger.warning("Could not initialize rate limiter in worker startup: {}", exc)
     logger.info("ARQ worker started for {} environment", settings.environment)
 
 
@@ -79,7 +86,8 @@ async def run_ingestion_pipeline(
                 from app.services.pipeline import IngestionPipelineService
 
                 vector_store = ctx.get("vector_store")
-                service = IngestionPipelineService(vector_store=vector_store)
+                rate_limiter = ctx.get("rate_limiter")
+                service = IngestionPipelineService(vector_store=vector_store, rate_limiter=rate_limiter)
             except (ImportError, AttributeError):
                 logger.warning(
                     "IngestionPipelineService not available; skipping pipeline run for job {}",
